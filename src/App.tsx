@@ -1,3 +1,4 @@
+import { Analytics } from '@vercel/analytics/react';
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   LayoutDashboard, 
@@ -2081,6 +2082,7 @@ export default function App() {
           background: rgba(255, 255, 255, 0.1);
         }
       `}</style>
+      <Analytics />
     </div>
   );
 }
