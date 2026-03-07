@@ -66,9 +66,10 @@ import {
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { storage, type Goal, type Category, type Milestone } from './storage';
+import { Logo, LogoFull } from './components/Logo';
 
 // --- Utility ---
-function cn(...inputs: ClassValue[]) {
+export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
@@ -682,14 +683,7 @@ export default function App() {
         isMobileMenuOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
       )}>
         <div className="p-6 border-bottom border-white/5 flex justify-between items-center">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-emerald-500 rounded-lg flex items-center justify-center shadow-lg shadow-emerald-500/20">
-              <Target className="text-[#052e1a] w-5 h-5" />
-            </div>
-            <h1 className="text-xl font-extrabold tracking-tight text-white">
-              Goal<span className="text-emerald-500">Forge</span>
-            </h1>
-          </div>
+          <LogoFull />
           <button 
             className="lg:hidden text-slate-400 hover:text-white"
             onClick={() => setIsMobileMenuOpen(false)}
@@ -799,14 +793,7 @@ export default function App() {
       <main className="flex-1 overflow-y-auto h-screen custom-scrollbar flex flex-col relative w-full">
         {/* Mobile Header */}
         <div className="lg:hidden flex items-center justify-between p-4 border-b border-white/5 bg-[#0a0e1a] sticky top-0 z-30">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-emerald-500 rounded-lg flex items-center justify-center shadow-lg shadow-emerald-500/20">
-              <Target className="text-[#052e1a] w-5 h-5" />
-            </div>
-            <h1 className="text-xl font-extrabold tracking-tight text-white">
-              Goal<span className="text-emerald-500">Forge</span>
-            </h1>
-          </div>
+          <LogoFull />
           <button 
             onClick={() => setIsMobileMenuOpen(true)}
             className="p-2 text-slate-400 hover:text-white bg-white/5 rounded-lg"
