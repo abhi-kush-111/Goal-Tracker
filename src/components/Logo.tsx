@@ -32,7 +32,7 @@ export const LogoFull = ({ className }: { className?: string }) => {
   return (
     <div className={cn("flex items-center gap-3 group cursor-pointer", className)}>
       <Logo />
-      <h1 className="text-2xl font-black tracking-tighter text-white">
+      <h1 className="text-2xl font-black tracking-tighter dark:text-white text-slate-900">
         Goal<span className="text-emerald-500">Forge</span>
       </h1>
     </div>
