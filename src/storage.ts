@@ -1,3 +1,13 @@
+import { 
+  isSameDay, 
+  isSameWeek, 
+  isSameMonth, 
+  parseISO, 
+  startOfDay, 
+  startOfWeek, 
+  startOfMonth 
+} from 'date-fns';
+
 const STORAGE_KEYS = {
   GOALS: 'goalforge_goals',
   CATEGORIES: 'goalforge_categories',
@@ -24,6 +34,8 @@ export interface Goal {
   streak: number;
   milestones: Milestone[];
   created_at?: string;
+  repeat?: 'None' | 'Daily' | 'Weekly' | 'Monthly';
+  last_reset_at?: string;
 }
 
 export interface Category {
@@ -46,7 +58,48 @@ const DEFAULT_CATEGORIES: Category[] = [
 export const storage = {
   getGoals(): Goal[] {
     const data = localStorage.getItem(STORAGE_KEYS.GOALS);
-    return data ? JSON.parse(data) : [];
+    let goals: Goal[] = data ? JSON.parse(data) : [];
+    
+    // Check and reset recurring goals
+    const now = new Date();
+    let changed = false;
+
+    goals = goals.map(goal => {
+      if (!goal.repeat || goal.repeat === 'None') return goal;
+
+      const lastReset = goal.last_reset_at ? parseISO(goal.last_reset_at) : (goal.created_at ? parseISO(goal.created_at) : now);
+      let shouldReset = false;
+
+      if (goal.repeat === 'Daily') {
+        shouldReset = !isSameDay(now, lastReset) && now > lastReset;
+      } else if (goal.repeat === 'Weekly') {
+        shouldReset = !isSameWeek(now, lastReset) && now > lastReset;
+      } else if (goal.repeat === 'Monthly') {
+        shouldReset = !isSameMonth(now, lastReset) && now > lastReset;
+      }
+
+      if (shouldReset) {
+        changed = true;
+        let newResetAt = now.toISOString();
+        if (goal.repeat === 'Daily') newResetAt = startOfDay(now).toISOString();
+        if (goal.repeat === 'Weekly') newResetAt = startOfWeek(now).toISOString();
+        if (goal.repeat === 'Monthly') newResetAt = startOfMonth(now).toISOString();
+
+        return {
+          ...goal,
+          last_reset_at: newResetAt,
+          progress: 0,
+          milestones: (goal.milestones || []).map(m => ({ ...m, done: false, completed_at: undefined }))
+        };
+      }
+      return goal;
+    });
+
+    if (changed) {
+      this.saveGoals(goals);
+    }
+
+    return goals;
   },
 
   saveGoals(goals: Goal[]) {

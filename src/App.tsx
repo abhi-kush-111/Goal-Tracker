@@ -438,7 +438,8 @@ export default function App() {
     category: '',
     priority: 'Medium' as const,
     deadline: '',
-    note: ''
+    note: '',
+    repeat: 'None' as 'None' | 'Daily' | 'Weekly' | 'Monthly'
   });
   const [newMilestone, setNewMilestone] = useState({
     title: '',
@@ -554,11 +555,12 @@ export default function App() {
         id, 
         progress: 0, 
         streak: 0, 
-        milestones: [] 
+        milestones: [],
+        last_reset_at: new Date().toISOString()
       });
     }
     setIsAddingGoal(false);
-    setNewGoal({ title: '', category: categories[0]?.name || 'Health', priority: 'Medium', deadline: '', note: '' });
+    setNewGoal({ title: '', category: categories[0]?.name || 'Health', priority: 'Medium', deadline: '', note: '', repeat: 'None' });
     fetchGoals();
   };
 
@@ -1127,6 +1129,12 @@ export default function App() {
                               <div className="flex items-center gap-2 mb-1">
                                 <Badge className={PRIORITY_COLORS[goal.priority]}>{goal.priority}</Badge>
                                 <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{goal.category}</span>
+                                {goal.repeat && goal.repeat !== 'None' && (
+                                  <Badge className="text-blue-400 bg-blue-400/10 border-blue-400/20 flex items-center gap-1">
+                                    <Clock className="w-2 h-2" />
+                                    {goal.repeat}
+                                  </Badge>
+                                )}
                               </div>
                               <h4 className="text-lg font-bold text-white truncate max-w-[200px]">{goal.title}</h4>
                             </div>
@@ -1141,7 +1149,8 @@ export default function App() {
                                   category: goal.category,
                                   priority: goal.priority,
                                   deadline: goal.deadline || '',
-                                  note: goal.note || ''
+                                  note: goal.note || '',
+                                  repeat: goal.repeat || 'None'
                                 });
                                 setIsAddingGoal(true);
                               }}
@@ -1841,15 +1850,33 @@ export default function App() {
                       </div>
                     </div>
                   </div>
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2">Deadline</label>
-                    <input 
-                      type="date" 
-                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-emerald-500/50 transition-colors cursor-pointer"
-                      onClick={(e) => (e.target as HTMLInputElement).showPicker()}
-                      value={newGoal.deadline}
-                      onChange={e => setNewGoal({...newGoal, deadline: e.target.value})}
-                    />
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2">Deadline</label>
+                      <input 
+                        type="date" 
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-emerald-500/50 transition-colors cursor-pointer"
+                        onClick={(e) => (e.target as HTMLInputElement).showPicker()}
+                        value={newGoal.deadline}
+                        onChange={e => setNewGoal({...newGoal, deadline: e.target.value})}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2">Repeat</label>
+                      <div className="relative">
+                        <select 
+                          className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-emerald-500/50 transition-colors appearance-none pr-10"
+                          value={newGoal.repeat}
+                          onChange={e => setNewGoal({...newGoal, repeat: e.target.value as any})}
+                        >
+                          <option value="None" className="bg-[#111827]">No Repeat</option>
+                          <option value="Daily" className="bg-[#111827]">Daily</option>
+                          <option value="Weekly" className="bg-[#111827]">Weekly</option>
+                          <option value="Monthly" className="bg-[#111827]">Monthly</option>
+                        </select>
+                        <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
+                      </div>
+                    </div>
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2">Note (Optional)</label>
@@ -1866,7 +1893,7 @@ export default function App() {
                       onClick={() => {
                         setIsAddingGoal(false);
                         setEditingGoal(null);
-                        setNewGoal({ title: '', category: categories[0]?.name || 'Health', priority: 'Medium', deadline: '', note: '' });
+                        setNewGoal({ title: '', category: categories[0]?.name || 'Health', priority: 'Medium', deadline: '', note: '', repeat: 'None' });
                       }}
                       className="flex-1 py-3 rounded-xl bg-white/5 text-slate-400 font-bold text-sm hover:bg-white/10 transition-colors"
                     >
