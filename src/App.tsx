@@ -51,7 +51,11 @@ import {
   useDroppable, 
   DragEndEvent,
   DragOverlay,
-  defaultDropAnimationSideEffects
+  defaultDropAnimationSideEffects,
+  useSensor,
+  useSensors,
+  PointerSensor,
+  TouchSensor
 } from '@dnd-kit/core';
 import { 
   format, 
@@ -107,7 +111,8 @@ const DraggableMilestone = ({ milestone, goalTitle }: { milestone: Milestone, go
 
   const style = transform ? {
     transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
-  } : undefined;
+    touchAction: 'none' as const,
+  } : { touchAction: 'none' as const };
 
   return (
     <div
@@ -116,7 +121,7 @@ const DraggableMilestone = ({ milestone, goalTitle }: { milestone: Milestone, go
       {...listeners}
       {...attributes}
       className={cn(
-        "p-2 md:p-3 rounded-xl border dark:border-white/5 border-slate-200 dark:bg-white/[0.02] bg-slate-50 cursor-grab active:cursor-grabbing hover:dark:border-white/10 hover:border-slate-300 transition-colors mb-2",
+        "p-2 md:p-3 rounded-xl border dark:border-white/5 border-slate-200 dark:bg-white/[0.02] bg-slate-50 cursor-grab active:cursor-grabbing hover:dark:border-white/10 hover:border-slate-300 transition-colors mb-2 touch-none",
         isDragging && "opacity-50 border-emerald-500/50 bg-emerald-500/5 z-50"
       )}
     >
@@ -139,7 +144,8 @@ const DraggableCalendarMilestone = ({ milestone, goalTitle }: { milestone: Miles
 
   const style = transform ? {
     transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
-  } : undefined;
+    touchAction: 'none' as const,
+  } : { touchAction: 'none' as const };
 
   return (
     <div
@@ -148,7 +154,7 @@ const DraggableCalendarMilestone = ({ milestone, goalTitle }: { milestone: Miles
       {...listeners}
       {...attributes}
       className={cn(
-        "px-1 md:px-2 py-0.5 md:py-1 rounded bg-emerald-500/10 border border-emerald-500/20 cursor-grab active:cursor-grabbing",
+        "px-1 md:px-2 py-0.5 md:py-1 rounded bg-emerald-500/10 border border-emerald-500/20 cursor-grab active:cursor-grabbing touch-none",
         isDragging && "opacity-50 border-emerald-500/50 bg-emerald-500/5 z-50"
       )}
     >
@@ -317,8 +323,22 @@ const AssignTasksView = ({ goals, onClose }: { goals: Goal[], onClose: () => voi
   const endDate = endOfWeek(monthEnd);
   const calendarDays = eachDayOfInterval({ start: startDate, end: endDate });
 
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 5,
+      },
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: {
+        delay: 250,
+        tolerance: 5,
+      },
+    })
+  );
+
   return (
-    <DndContext onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+    <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -574,6 +594,20 @@ export default function App() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isCustomizingNav, setIsCustomizingNav] = useState(false);
   const [activeCalendarDragId, setActiveCalendarDragId] = useState<string | null>(null);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 5,
+      },
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: {
+        delay: 250,
+        tolerance: 5,
+      },
+    })
+  );
 
   const unassignedMilestones = useMemo(() => {
     return goals.flatMap(g => 
@@ -1150,7 +1184,7 @@ export default function App() {
               {navOrder.map((item) => {
                 const Icon = { Sun, LayoutDashboard, Target, Filter, Calendar }[item.icon] || LayoutDashboard;
                 return (
-                  <Reorder.Item key={item.id} value={item} className="flex items-center gap-3 px-3 py-2.5 rounded-xl dark:bg-white/5 bg-slate-100 border dark:border-white/10 border-slate-300 cursor-grab active:cursor-grabbing">
+                  <Reorder.Item key={item.id} value={item} className="flex items-center gap-3 px-3 py-2.5 rounded-xl dark:bg-white/5 bg-slate-100 border dark:border-white/10 border-slate-300 cursor-grab active:cursor-grabbing touch-none">
                     <GripVertical className="w-4 h-4 dark:text-slate-500 text-slate-600" />
                     <Icon className="w-4 h-4 dark:text-slate-400 dark:text-slate-500 text-slate-600" />
                     <span className="text-sm font-semibold dark:text-slate-200 text-slate-800">{item.label}</span>
@@ -1604,16 +1638,16 @@ export default function App() {
                                     transition={{ type: 'spring', stiffness: 300, damping: 30 }}
                                     drag="x"
                                     dragConstraints={{ left: 0, right: 0 }}
-                                    dragElastic={1}
+                                    dragElastic={0.7}
                                     onDragEnd={(e, { offset, velocity }) => {
-                                      const swipe = Math.abs(offset.x) * velocity.x;
-                                      if (swipe < -10000) {
+                                      const swipeDistance = offset.x;
+                                      if (swipeDistance < -50 || (swipeDistance < -20 && velocity.x < -500)) {
                                         setCarouselIndex(prev => prev + 1);
-                                      } else if (swipe > 10000) {
+                                      } else if (swipeDistance > 50 || (swipeDistance > 20 && velocity.x > 500)) {
                                         setCarouselIndex(prev => prev > 0 ? prev - 1 : sortedTasks.length - 1);
                                       }
                                     }}
-                                    className="absolute inset-0 flex flex-col p-8 cursor-grab active:cursor-grabbing"
+                                    className="absolute inset-0 flex flex-col p-8 cursor-grab active:cursor-grabbing touch-pan-y"
                                   >
                                     <div className="flex justify-between items-start mb-auto">
                                       <div className="px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest" style={{ backgroundColor: `${catColor}15`, color: catColor }}>
@@ -2676,7 +2710,7 @@ export default function App() {
               </div>
             </motion.div>
           ) : view === 'calendar' ? (
-            <DndContext onDragStart={handleCalendarDragStart} onDragEnd={handleCalendarDragEnd}>
+            <DndContext sensors={sensors} onDragStart={handleCalendarDragStart} onDragEnd={handleCalendarDragEnd}>
               <motion.div 
                 key="calendar"
                 initial={{ opacity: 0 }}
@@ -2976,7 +3010,7 @@ export default function App() {
                     <Reorder.Item 
                       key={widget.id} 
                       value={widget}
-                      className="flex items-center gap-4 p-4 dark:bg-white/5 bg-slate-100 border dark:border-white/5 border-slate-200 rounded-2xl cursor-grab active:cursor-grabbing group"
+                      className="flex items-center gap-4 p-4 dark:bg-white/5 bg-slate-100 border dark:border-white/5 border-slate-200 rounded-2xl cursor-grab active:cursor-grabbing group touch-none"
                     >
                       <GripVertical className="w-4 h-4 dark:text-slate-500 text-slate-600 group-hover:dark:text-slate-400 transition-colors" />
                       <span className="flex-1 text-sm font-bold dark:text-slate-200 text-slate-800">{widget.label}</span>
