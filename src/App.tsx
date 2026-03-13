@@ -26,7 +26,8 @@ import {
   Sun,
   Moon,
   Activity,
-  Zap
+  Zap,
+  Trophy
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -43,6 +44,7 @@ import {
   Area
 } from 'recharts';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
+import confetti from 'canvas-confetti';
 import { 
   DndContext, 
   useDraggable, 
@@ -546,6 +548,23 @@ export default function App() {
   const [activeGoalId, setActiveGoalId] = useState<string | null>(null);
   const [isAddingGoal, setIsAddingGoal] = useState(false);
   const [isAddingHabit, setIsAddingHabit] = useState(false);
+  const [isFocusMode, setIsFocusMode] = useState(false);
+  
+  // New Today View States
+  const [yesterdayScore, setYesterdayScore] = useState<number>(() => {
+    const saved = localStorage.getItem('gf_yesterday_score');
+    return saved ? parseInt(saved, 10) : 0;
+  });
+  const [barPulse, setBarPulse] = useState(false);
+  const [lastCompleted, setLastCompleted] = useState<string | null>(null);
+  const [showBreather, setShowBreather] = useState(false);
+  const [breatherMessage, setBreatherMessage] = useState("");
+  const [carouselIndex, setCarouselIndex] = useState(0);
+  const [slidingOut, setSlidingOut] = useState<Set<string>>(new Set());
+  const [floatingPoints, setFloatingPoints] = useState<{ id: string, points: number, x: number, y: number }[]>([]);
+  const [crushedExpanded, setCrushedExpanded] = useState(false);
+  const [showMomentumMobile, setShowMomentumMobile] = useState(false);
+
   const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
   const [editingHabit, setEditingHabit] = useState<Habit | null>(null);
   const [isAddingMilestone, setIsAddingMilestone] = useState(false);
@@ -647,6 +666,10 @@ export default function App() {
     fetchCategories();
     setLoading(false);
   }, []);
+
+  const getTaskPoints = (task: any) => {
+    return 10;
+  };
 
   const allCalendarItems = useMemo(() => {
     const items: any[] = [];
@@ -915,6 +938,144 @@ export default function App() {
     return getItemsForDate(new Date());
   }, [allCalendarItems]);
 
+  const todayProgress = useMemo(() => {
+    if (todayMilestones.length === 0) return 0;
+    return (todayMilestones.filter(m => m.done).length / todayMilestones.length) * 100;
+  }, [todayMilestones]);
+
+  const todayScore = useMemo(() => {
+    return todayMilestones.filter(m => m.done).reduce((acc, task) => acc + getTaskPoints(task), 0);
+  }, [todayMilestones]);
+
+  useEffect(() => {
+    const lastDate = localStorage.getItem('gf_last_date');
+    const todayStr = new Date().toDateString();
+    
+    if (lastDate && lastDate !== todayStr) {
+      const lastScore = localStorage.getItem('gf_today_score') || '0';
+      localStorage.setItem('gf_yesterday_score', lastScore);
+      setYesterdayScore(parseInt(lastScore, 10));
+    }
+    localStorage.setItem('gf_last_date', todayStr);
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('gf_today_score', todayScore.toString());
+  }, [todayScore]);
+
+  const getHeroTheme = () => {
+    const h = new Date().getHours();
+    if (h >= 5 && h < 12) return { label: "FRESH START", bg: "linear-gradient(135deg, #0f766e 0%, #064e3b 100%)", msg: "Today is yours." };
+    if (h >= 12 && h < 17) return { label: "STAY FOCUSED", bg: "linear-gradient(135deg, #4338ca 0%, #312e81 100%)", msg: "You're in the zone. Keep pushing." };
+    if (h >= 17 && h < 22) return { label: "FINISH STRONG", bg: "linear-gradient(135deg, #b45309 0%, #78350f 100%)", msg: "The day isn't over yet. Finish strong." };
+    return { label: "ONE LAST PUSH", bg: "linear-gradient(135deg, #991b1b 0%, #450a0a 100%)", msg: "Don't carry this to tomorrow." };
+  };
+
+  const getBarColor = (progress: number) => {
+    if (progress <= 33) return '#EF4444';
+    if (progress <= 66) return '#F59E0B';
+    if (progress < 100) return '#22C55E';
+    return '#C8F55A';
+  };
+
+  const handleToggleToday = (ms: any) => {
+    if (ms.isHabit) {
+      storage.toggleHabit(ms.id, new Date());
+    } else if (ms.isGoalAsMilestone) {
+      storage.toggleGoalCompletion(ms.id, new Date());
+    } else {
+      storage.toggleMilestone(ms.id, new Date());
+    }
+    fetchGoals();
+    
+    // Check if this was the last task
+    const isCompleting = !ms.done;
+    const doneCount = todayMilestones.filter(m => m.done).length;
+    if (isCompleting && doneCount + 1 === todayMilestones.length && todayMilestones.length > 0) {
+      confetti({
+        particleCount: 150,
+        spread: 70,
+        origin: { y: 0.6 },
+        colors: ['#10b981', '#34d399', '#6ee7b7']
+      });
+    }
+  };
+
+  const handleArenaComplete = (task: any, e?: React.MouseEvent | TouchEvent | PointerEvent) => {
+    if (!task.done) {
+      setBarPulse(true);
+      setTimeout(() => setBarPulse(false), 300);
+
+      const points = getTaskPoints(task);
+      let x = window.innerWidth / 2;
+      let y = window.innerHeight / 2;
+      
+      if (e && e.currentTarget instanceof HTMLElement) {
+        const rect = e.currentTarget.getBoundingClientRect();
+        x = rect.left + rect.width / 2;
+        y = rect.top;
+      }
+
+      const newPoint = { id: uid(), points, x, y };
+      setFloatingPoints(prev => [...prev, newPoint]);
+      setTimeout(() => {
+        setFloatingPoints(prev => prev.filter(p => p.id !== newPoint.id));
+      }, 1000);
+
+      const messages = ["One down. You're moving.", "That's the momentum. Next.", "Streak intact. Keep going.", "Clean. Next challenge.", "Locked in. What's next?"];
+      setBreatherMessage(messages[Math.floor(Math.random() * messages.length)]);
+      setLastCompleted(task.title);
+      setShowBreather(true);
+
+      setTimeout(() => {
+        handleToggleToday(task);
+        setShowBreather(false);
+      }, 1000);
+    } else {
+      handleToggleToday(task);
+    }
+  };
+
+  const CircularProgress = ({ progress, size = 160, strokeWidth = 12 }: { progress: number, size?: number, strokeWidth?: number }) => {
+    const radius = (size - strokeWidth) / 2;
+    const circumference = radius * 2 * Math.PI;
+    const offset = circumference - (progress / 100) * circumference;
+
+    return (
+      <div className="relative flex items-center justify-center" style={{ width: size, height: size }}>
+        <svg width={size} height={size} className="transform -rotate-90">
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            stroke="currentColor"
+            strokeWidth={strokeWidth}
+            fill="transparent"
+            className="text-slate-200 dark:text-white/5"
+          />
+          <motion.circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            stroke="currentColor"
+            strokeWidth={strokeWidth}
+            fill="transparent"
+            strokeDasharray={circumference}
+            initial={{ strokeDashoffset: circumference }}
+            animate={{ strokeDashoffset: offset }}
+            transition={{ duration: 1, ease: "circOut" }}
+            className="text-emerald-500"
+            strokeLinecap="round"
+          />
+        </svg>
+        <div className="absolute flex flex-col items-center justify-center">
+          <span className={cn("font-bold dark:text-white text-slate-900", size < 120 ? "text-2xl" : "text-3xl")}>{Math.round(progress)}%</span>
+          <span className="text-[9px] font-bold uppercase tracking-widest dark:text-slate-500 text-slate-400">Complete</span>
+        </div>
+      </div>
+    );
+  };
+
   const repeatabilityData = useMemo(() => {
     const last7Days = Array.from({ length: 7 }, (_, i) => {
       const d = new Date();
@@ -1112,83 +1273,555 @@ export default function App() {
               exit={{ opacity: 0 }}
               className="p-4 md:p-8 max-w-6xl mx-auto w-full"
             >
-              <header className="mb-8 md:mb-10">
-                <h2 className="text-2xl md:text-3xl font-extrabold dark:text-white text-slate-900 tracking-tight mb-2">Today</h2>
-                <p className="dark:text-slate-400 dark:text-slate-500 text-slate-600 text-sm">Your daily focus and streaks.</p>
-              </header>
-
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <div className="lg:col-span-2 space-y-6">
-                  <Card className="p-6">
-                    <div className="flex items-center justify-between mb-6">
-                      <h3 className="text-sm font-bold uppercase tracking-widest text-emerald-500">Today's Tasks</h3>
-                      <span className="text-xs font-bold dark:text-slate-500 text-slate-600 dark:bg-white/5 bg-slate-100 px-2 py-1 rounded-md">
-                        {todayMilestones.filter(m => m.done).length} / {todayMilestones.length}
-                      </span>
+              <AnimatePresence>
+                {isFocusMode && todayMilestones.some(m => !m.done) ? (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.9 }}
+                    className="fixed inset-0 z-[100] bg-[#0a0a0a] flex flex-col items-center justify-center p-8"
+                  >
+                    <div className="absolute inset-0 overflow-hidden pointer-events-none">
+                      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-emerald-500/10 blur-[150px] rounded-full animate-pulse" />
                     </div>
-                    <div className="space-y-4">
-                      {todayMilestones.length === 0 ? (
-                        <div className="py-10 text-center border border-dashed dark:border-white/5 border-slate-200 rounded-2xl">
-                          <p className="text-slate-600 text-xs italic">No tasks for today. Enjoy your day!</p>
+                    
+                    <button 
+                      onClick={() => setIsFocusMode(false)}
+                      className="absolute top-8 right-8 p-4 rounded-full bg-white/5 text-white hover:bg-white/10 transition-colors"
+                    >
+                      <X className="w-6 h-6" />
+                    </button>
+
+                    <div className="relative text-center max-w-2xl w-full">
+                      <div className="w-16 h-16 bg-emerald-500/10 rounded-2xl flex items-center justify-center mx-auto mb-10 shadow-xl shadow-emerald-500/5">
+                        <Zap className="w-8 h-8 text-emerald-500 fill-emerald-500" />
+                      </div>
+                      
+                      <p className="text-emerald-500 font-bold uppercase tracking-[0.2em] text-xs mb-4">Current Protocol</p>
+                      
+                      {(() => {
+                        const mainTask = todayMilestones.find(m => !m.done);
+                        return (
+                          <>
+                            <h2 className="text-4xl md:text-6xl font-extrabold text-white tracking-tight mb-6 leading-tight">
+                              {mainTask?.title}
+                            </h2>
+                            <p className="text-white/50 text-lg font-medium mb-12 uppercase tracking-widest flex items-center justify-center gap-2">
+                              {mainTask?.goalTitle} <span className="w-1.5 h-1.5 rounded-full bg-white/20" /> {mainTask?.category}
+                            </p>
+                            
+                            <div className="flex flex-col md:flex-row items-center justify-center gap-4">
+                              <button 
+                                onClick={() => {
+                                  handleToggleToday(mainTask);
+                                  if (todayMilestones.filter(m => !m.done).length <= 1) {
+                                    setIsFocusMode(false);
+                                  }
+                                }}
+                                className="w-full md:w-auto px-10 py-5 bg-emerald-500 text-white rounded-2xl font-bold text-lg hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-500/20 active:scale-95"
+                              >
+                                Task Complete
+                              </button>
+                              <button 
+                                onClick={() => setIsFocusMode(false)}
+                                className="w-full md:w-auto px-10 py-5 bg-white/10 text-white rounded-2xl font-bold text-lg hover:bg-white/20 transition-all active:scale-95"
+                              >
+                                Exit Focus
+                              </button>
+                            </div>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  </motion.div>
+                ) : null}
+              </AnimatePresence>
+
+              {todayMilestones.length === 0 ? (
+                <div className="space-y-6 md:space-y-8">
+                  {/* Desktop Hero */}
+                  <div className="hidden md:block relative overflow-hidden rounded-[1.5rem] p-8 text-white" style={{ background: getHeroTheme().bg }}>
+                    <div className="flex justify-between items-start mb-8">
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-white/60 mb-2">{getHeroTheme().label}</p>
+                        <h2 className="text-4xl font-extrabold tracking-tight mb-2">Daily Mission</h2>
+                        <p className="text-white/60 text-sm">Your schedule is clear — assign tasks from the Calendar</p>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-4xl font-extrabold">{todayScore}</div>
+                        <div className="text-[10px] text-white/50 uppercase tracking-widest">pts today</div>
+                        {todayScore !== yesterdayScore && (
+                          <div className={cn("text-xs mt-1", todayScore > yesterdayScore ? "text-green-400" : "text-red-400")}>
+                            {todayScore > yesterdayScore ? '↑' : '↓'} vs yesterday
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div className="h-5 rounded-full bg-white/10 relative overflow-hidden">
+                      <div className="absolute top-0 left-0 h-full rounded-full transition-all duration-1000" style={{ width: '0%', backgroundColor: getBarColor(0) }} />
+                    </div>
+                  </div>
+
+                  {/* Mobile Hero & Streak (Compact) */}
+                  <div className="md:hidden flex items-center justify-between bg-white/40 dark:bg-[#1a1a1a]/40 backdrop-blur-md border border-slate-200/50 dark:border-white/5 rounded-2xl p-3 mb-4">
+                    <div className="flex items-center gap-3">
+                      <div className="relative w-10 h-10 rounded-full bg-slate-100 dark:bg-white/5 flex items-center justify-center overflow-hidden">
+                        <svg className="absolute inset-0 w-full h-full -rotate-90" viewBox="0 0 36 36">
+                          <path
+                            className="text-slate-200 dark:text-white/10"
+                            strokeWidth="3"
+                            stroke="currentColor"
+                            fill="none"
+                            d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                          />
+                          <path
+                            strokeWidth="3"
+                            strokeDasharray={`0, 100`}
+                            strokeLinecap="round"
+                            stroke={getBarColor(0)}
+                            fill="none"
+                            d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                          />
+                        </svg>
+                        <span className="text-[10px] font-bold text-slate-900 dark:text-white">0%</span>
+                      </div>
+                      <div>
+                        <div className="text-sm font-bold text-slate-900 dark:text-white leading-none mb-1">{todayScore} <span className="text-[10px] text-slate-500 uppercase tracking-widest font-semibold">pts</span></div>
+                        <div className="text-[10px] font-medium text-slate-500">
+                          Schedule is clear
                         </div>
-                      ) : (
-                        todayMilestones.map(ms => (
-                          <div key={ms.id} className="flex items-center gap-4 p-4 rounded-2xl dark:bg-white/[0.02] bg-slate-50 border dark:border-white/5 border-slate-200 hover:dark:border-white/10 hover:border-slate-300 transition-colors">
-                            <button 
-                              onClick={() => {
-                                if (ms.isGoalAsMilestone) {
-                                  storage.toggleGoalCompletion(ms.id, new Date());
-                                  fetchGoals();
-                                } else {
-                                  toggleMilestone(ms.id);
-                                }
-                              }}
-                              className={cn(
-                                "w-6 h-6 rounded-lg flex items-center justify-center transition-all duration-200 shrink-0",
-                                ms.done ? "bg-emerald-500 text-[#052e1a]" : "border-2 dark:border-slate-700 border-slate-300 hover:dark:border-slate-500 hover:border-slate-400"
-                              )}
-                            >
-                              {ms.done && <CheckCircle2 className="w-4 h-4" />}
-                            </button>
-                            <div className="flex-1 min-w-0">
-                              <p className={cn("text-sm font-bold truncate", ms.done ? "dark:text-slate-500 text-slate-600 line-through" : "dark:text-slate-200 text-slate-800")}>
-                                {ms.title}
-                              </p>
-                              <div className="flex items-center gap-2 mt-1">
-                                <p className="text-[10px] dark:text-slate-500 text-slate-600 uppercase font-bold truncate">{ms.goalTitle}</p>
-                                {ms.repeat && ms.repeat !== 'None' && (
-                                  <span className="text-[10px] text-blue-400 bg-blue-400/10 px-1.5 py-0.5 rounded">Repeats {ms.repeat}</span>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        ))
-                      )}
+                      </div>
                     </div>
-                  </Card>
+                    {todayScore !== yesterdayScore && (
+                      <div className={cn("text-[10px] font-bold px-2 py-1 rounded-full", todayScore > yesterdayScore ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-rose-500/10 text-rose-600 dark:text-rose-400")}>
+                        {todayScore > yesterdayScore ? '↑' : '↓'} vs yday
+                      </div>
+                    )}
+                  </div>
+                  
+                  <div className="flex flex-col items-center justify-center py-20 bg-white dark:bg-white/5 rounded-[2rem] border border-slate-100 dark:border-white/5">
+                    <div className="text-6xl mb-6">📅</div>
+                    <h3 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">Your Arena Awaits</h3>
+                    <p className="text-slate-500 mb-8 text-center max-w-md">No tasks assigned for today. Head to the Calendar to schedule your milestones.</p>
+                    <div className="flex gap-4">
+                      <button onClick={() => setView('calendar')} className="px-6 py-3 bg-slate-100 dark:bg-white/10 text-slate-900 dark:text-white rounded-xl font-bold hover:bg-slate-200 dark:hover:bg-white/20 transition-colors">Go to Calendar</button>
+                      <button onClick={() => setIsAddingMilestone(true)} className="px-6 py-3 bg-emerald-500 text-white rounded-xl font-bold hover:bg-emerald-600 transition-colors">Add Milestone</button>
+                    </div>
+                  </div>
                 </div>
+              ) : todayProgress === 100 ? (
+                <div className="flex flex-col items-center justify-center min-h-[60vh] rounded-[2rem] bg-[var(--sidebar)] relative overflow-hidden border border-emerald-500/20">
+                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,var(--accent)_0%,transparent_70%)] opacity-5" />
+                  <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: 'spring', bounce: 0.5 }} className="text-8xl mb-8">🏆</motion.div>
+                  <h2 className="text-5xl md:text-7xl font-black text-white tracking-tighter mb-4">Day Conquered</h2>
+                  <p className="text-xl text-white/60 mb-12">{format(new Date(), 'EEEE, MMMM d')}</p>
+                  
+                  <div className="text-center mb-12">
+                    <div className="text-7xl font-black text-[var(--accent)] mb-2">{todayScore}</div>
+                    <div className="text-sm font-bold uppercase tracking-widest text-white/40">points</div>
+                  </div>
+                  
+                  <div className="flex flex-wrap justify-center gap-4 mb-12">
+                    <div className="px-6 py-3 rounded-full bg-white/5 border border-white/10 text-white font-medium">{todayMilestones.length} tasks done</div>
+                    <div className="px-6 py-3 rounded-full bg-white/5 border border-white/10 text-white font-medium">{Math.max(0, ...goals.map(g => g.streak))} day streak</div>
+                    <div className="px-6 py-3 rounded-full bg-white/5 border border-white/10 text-white font-medium">100% progress</div>
+                  </div>
+                  
+                  <div className="flex flex-wrap justify-center gap-4">
+                    <button onClick={() => {
+                      navigator.clipboard.writeText(`✅ GoalForge Daily Summary — ${format(new Date(), 'MMM d')}\n${todayScore} points\n${todayMilestones.length} tasks completed\nStreak: ${Math.max(0, ...goals.map(g => g.streak))} days`);
+                    }} className="px-8 py-4 bg-white/10 text-white rounded-2xl font-bold hover:bg-white/20 transition-colors">Copy Summary</button>
+                    <button onClick={() => setView('calendar')} className="px-8 py-4 bg-[var(--accent)] text-black rounded-2xl font-bold hover:opacity-90 transition-opacity">Plan Tomorrow →</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-8 relative">
+                  {floatingPoints.map(fp => (
+                    <motion.div
+                      key={fp.id}
+                      initial={{ opacity: 1, y: 0 }}
+                      animate={{ opacity: 0, y: -30 }}
+                      transition={{ duration: 0.6 }}
+                      className="fixed z-50 font-black text-emerald-500 text-lg pointer-events-none"
+                      style={{ left: fp.x, top: fp.y }}
+                    >
+                      +{fp.points}
+                    </motion.div>
+                  ))}
 
-                <div className="space-y-6">
-                  <Card className="p-6">
-                    <h3 className="text-sm font-bold uppercase tracking-widest text-emerald-500 mb-6">Active Streaks</h3>
-                    <div className="space-y-4">
-                      {goals.filter(g => g.streak > 0).length === 0 ? (
-                        <p className="text-xs dark:text-slate-500 text-slate-600 italic text-center py-4">No active streaks. Complete tasks to build them!</p>
-                      ) : (
-                        goals.filter(g => g.streak > 0).sort((a, b) => b.streak - a.streak).slice(0, 5).map(goal => (
-                          <div key={goal.id} className="flex items-center justify-between p-3 rounded-xl dark:bg-white/5 bg-slate-100">
-                            <span className="text-sm font-medium dark:text-slate-300 text-slate-700 truncate pr-4">{goal.title}</span>
-                            <div className="flex items-center gap-1.5 shrink-0">
-                              <Flame className="w-4 h-4 text-orange-500" />
-                              <span className="text-sm font-bold text-orange-500">{goal.streak}</span>
-                            </div>
+                  <div className="space-y-6 md:space-y-8">
+                  {/* Desktop Hero */}
+                  <div className="hidden md:block relative overflow-hidden rounded-[1.5rem] p-8 text-white" style={{ background: getHeroTheme().bg }}>
+                    <div className="flex justify-between items-start mb-8">
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-white/60 mb-2">{getHeroTheme().label}</p>
+                        <h2 className="text-4xl font-extrabold tracking-tight mb-2">Daily Mission</h2>
+                        <p className="text-white/60 text-sm">
+                          {getHeroTheme().msg} {todayMilestones.length - todayMilestones.filter(m => m.done).length} challenge{todayMilestones.length - todayMilestones.filter(m => m.done).length !== 1 ? 's' : ''} standing.
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-4xl font-extrabold">{todayScore}</div>
+                        <div className="text-[10px] text-white/50 uppercase tracking-widest">pts today</div>
+                        {todayScore !== yesterdayScore && (
+                          <div className={cn("text-xs mt-1", todayScore > yesterdayScore ? "text-green-400" : "text-red-400")}>
+                            {todayScore > yesterdayScore ? '↑' : '↓'} vs yesterday
                           </div>
-                        ))
+                        )}
+                      </div>
+                    </div>
+                    <motion.div 
+                      animate={barPulse ? { scale: 1.02 } : { scale: 1 }}
+                      transition={{ duration: 0.3 }}
+                      className="h-5 rounded-full bg-white/10 relative overflow-hidden"
+                    >
+                      <div 
+                        className={cn("absolute top-0 left-0 h-full rounded-full transition-all duration-800 ease-[cubic-bezier(0.16,1,0.3,1)] flex items-center justify-end pr-2", todayProgress === 100 && "animate-pulse")}
+                        style={{ width: `${todayProgress}%`, backgroundColor: getBarColor(todayProgress) }}
+                      >
+                        {todayProgress > 5 && <span className="text-[10px] font-bold text-white/90">{Math.round(todayProgress)}%</span>}
+                      </div>
+                    </motion.div>
+                  </div>
+
+                  {/* Mobile Hero & Streak (Compact) */}
+                  <div className="md:hidden flex items-center justify-between bg-white/40 dark:bg-[#1a1a1a]/40 backdrop-blur-md border border-slate-200/50 dark:border-white/5 rounded-2xl p-3 mb-4">
+                    <div className="flex items-center gap-3">
+                      <div className="relative w-10 h-10 rounded-full bg-slate-100 dark:bg-white/5 flex items-center justify-center overflow-hidden">
+                        <svg className="absolute inset-0 w-full h-full -rotate-90" viewBox="0 0 36 36">
+                          <path
+                            className="text-slate-200 dark:text-white/10"
+                            strokeWidth="3"
+                            stroke="currentColor"
+                            fill="none"
+                            d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                          />
+                          <path
+                            strokeWidth="3"
+                            strokeDasharray={`${todayProgress}, 100`}
+                            strokeLinecap="round"
+                            stroke={getBarColor(todayProgress)}
+                            fill="none"
+                            d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                          />
+                        </svg>
+                        <span className="text-[10px] font-bold text-slate-900 dark:text-white">{Math.round(todayProgress)}%</span>
+                      </div>
+                      <div>
+                        <div className="text-sm font-bold text-slate-900 dark:text-white leading-none mb-1">{todayScore} <span className="text-[10px] text-slate-500 uppercase tracking-widest font-semibold">pts</span></div>
+                        {(() => {
+                          const highestStreak = Math.max(0, ...goals.map(g => g.streak));
+                          if (highestStreak > 0) {
+                            return (
+                              <div className="text-[10px] font-medium text-amber-600 dark:text-amber-500 flex items-center gap-1">
+                                <Flame className="w-3 h-3" /> {highestStreak} day streak
+                              </div>
+                            );
+                          }
+                          return (
+                            <div className="text-[10px] font-medium text-slate-500">
+                              {todayMilestones.length - todayMilestones.filter(m => m.done).length} tasks left
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                    {todayScore !== yesterdayScore && (
+                      <div className={cn("text-[10px] font-bold px-2 py-1 rounded-full", todayScore > yesterdayScore ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-rose-500/10 text-rose-600 dark:text-rose-400")}>
+                        {todayScore > yesterdayScore ? '↑' : '↓'} vs yday
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="hidden md:block">
+                    {(() => {
+                      const highestStreak = Math.max(0, ...goals.map(g => g.streak));
+                      if (highestStreak > 0) {
+                        const hoursLeft = 24 - new Date().getHours();
+                        const isUrgent = new Date().getHours() >= 18;
+                        const incompleteCount = todayMilestones.length - todayMilestones.filter(m => m.done).length;
+                        
+                        return (
+                          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-500 text-sm font-medium">
+                            {isUrgent ? (
+                              <>⚡ {incompleteCount} tasks left — {hoursLeft} hours to protect your {highestStreak}-day streak</>
+                            ) : (
+                              <>🔥 {highestStreak} day streak active — complete today's tasks to keep it alive</>
+                            )}
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    <div className="lg:col-span-2 space-y-8">
+                      {(() => {
+                        const incompleteTasks = todayMilestones.filter(m => !m.done);
+                        if (incompleteTasks.length === 0 && !showBreather) return null;
+                        
+                        // Sort tasks: High priority first
+                        const sortedTasks = [...incompleteTasks].sort((a, b) => {
+                          const pA = a.priority === 'High' ? 3 : a.priority === 'Medium' ? 2 : 1;
+                          const pB = b.priority === 'High' ? 3 : b.priority === 'Medium' ? 2 : 1;
+                          return pB - pA;
+                        });
+
+                        const currentTask = sortedTasks[carouselIndex % sortedTasks.length];
+                        const catColor = currentTask?.categoryColor || '#10b981';
+                        
+                        return (
+                          <div className="flex flex-col items-center">
+                            <div className="relative w-full max-w-md aspect-square rounded-[2rem] overflow-hidden bg-white dark:bg-[#1a1a1a] shadow-2xl shadow-black/10 dark:shadow-black/40 border border-slate-100 dark:border-white/5">
+                              <AnimatePresence mode="wait">
+                                {showBreather ? (
+                                  <motion.div 
+                                    key="breather"
+                                    initial={{ opacity: 0, scale: 0.9 }}
+                                    animate={{ opacity: 1, scale: 1 }}
+                                    exit={{ opacity: 0, scale: 1.1 }}
+                                    transition={{ duration: 0.3 }}
+                                    className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center bg-emerald-500 text-white"
+                                  >
+                                    <motion.div 
+                                      initial={{ scale: 0 }} 
+                                      animate={{ scale: 1 }} 
+                                      transition={{ type: 'spring', bounce: 0.6, delay: 0.1 }}
+                                      className="w-20 h-20 rounded-full bg-white/20 flex items-center justify-center mb-6"
+                                    >
+                                      <CheckCircle2 className="w-10 h-10" />
+                                    </motion.div>
+                                    <h3 className="text-2xl font-black tracking-tight mb-2">{breatherMessage}</h3>
+                                    <p className="text-emerald-100 font-medium">{lastCompleted}</p>
+                                  </motion.div>
+                                ) : (
+                                  <motion.div 
+                                    key={currentTask?.id}
+                                    initial={{ opacity: 0, x: 50 }}
+                                    animate={{ opacity: 1, x: 0 }}
+                                    exit={{ opacity: 0, x: -50 }}
+                                    transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+                                    drag="x"
+                                    dragConstraints={{ left: 0, right: 0 }}
+                                    dragElastic={1}
+                                    onDragEnd={(e, { offset, velocity }) => {
+                                      const swipe = Math.abs(offset.x) * velocity.x;
+                                      if (swipe < -10000) {
+                                        setCarouselIndex(prev => prev + 1);
+                                      } else if (swipe > 10000) {
+                                        setCarouselIndex(prev => prev > 0 ? prev - 1 : sortedTasks.length - 1);
+                                      }
+                                    }}
+                                    className="absolute inset-0 flex flex-col p-8 cursor-grab active:cursor-grabbing"
+                                  >
+                                    <div className="flex justify-between items-start mb-auto">
+                                      <div className="px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest" style={{ backgroundColor: `${catColor}15`, color: catColor }}>
+                                        {currentTask?.category}
+                                      </div>
+                                      {currentTask?.priority === 'High' && (
+                                        <div className="flex items-center gap-1 text-rose-500 text-[10px] font-bold uppercase tracking-widest">
+                                          <Flame className="w-3 h-3" /> Hardest First
+                                        </div>
+                                      )}
+                                    </div>
+                                    
+                                    <div className="flex-1 flex flex-col justify-center items-center text-center">
+                                      <h2 className="text-3xl md:text-4xl font-black text-slate-900 dark:text-white leading-tight tracking-tight mb-4">
+                                        {currentTask?.title}
+                                      </h2>
+                                      <p className="text-sm font-medium text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                                        <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: catColor }} />
+                                        {currentTask?.goalTitle}
+                                      </p>
+                                    </div>
+                                    
+                                    <div className="mt-auto pt-8">
+                                      <button 
+                                        onClick={(e) => handleArenaComplete(currentTask, e)}
+                                        className="w-full py-4 rounded-2xl font-black text-sm transition-all hover:scale-[1.02] active:scale-[0.98] shadow-lg flex items-center justify-center gap-2"
+                                        style={{ backgroundColor: catColor, color: '#fff', boxShadow: `0 10px 25px -5px ${catColor}40` }}
+                                      >
+                                        <CheckCircle2 className="w-5 h-5" /> MARK COMPLETE
+                                      </button>
+                                    </div>
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </div>
+                            
+                            {!showBreather && sortedTasks.length > 1 && (
+                              <div className="flex items-center gap-4 mt-8">
+                                <button 
+                                  onClick={() => setCarouselIndex(prev => prev > 0 ? prev - 1 : sortedTasks.length - 1)}
+                                  className="hidden md:flex w-10 h-10 rounded-full bg-white dark:bg-white/5 border border-slate-200 dark:border-white/10 items-center justify-center text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors"
+                                >
+                                  <ChevronRight className="w-5 h-5 rotate-180" />
+                                </button>
+                                <div className="flex gap-2">
+                                  {sortedTasks.map((_, idx) => (
+                                    <div 
+                                      key={idx} 
+                                      className={cn(
+                                        "w-2 h-2 rounded-full transition-all duration-300",
+                                        idx === (carouselIndex % sortedTasks.length) ? "bg-slate-800 dark:bg-white w-4" : "bg-slate-300 dark:bg-white/20"
+                                      )}
+                                    />
+                                  ))}
+                                </div>
+                                <button 
+                                  onClick={() => setCarouselIndex(prev => prev + 1)}
+                                  className="hidden md:flex w-10 h-10 rounded-full bg-white dark:bg-white/5 border border-slate-200 dark:border-white/10 items-center justify-center text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors"
+                                >
+                                  <ChevronRight className="w-5 h-5" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+
+                      {todayMilestones.filter(m => m.done).length > 0 && (
+                        <div className="border border-slate-200 dark:border-white/10 rounded-2xl overflow-hidden">
+                          <button 
+                            onClick={() => setCrushedExpanded(!crushedExpanded)}
+                            className="w-full flex items-center justify-between p-4 bg-slate-50 dark:bg-white/5 hover:bg-slate-100 dark:hover:bg-white/10 transition-colors"
+                          >
+                            <div className="flex items-center gap-3">
+                              <Trophy className="w-4 h-4 text-emerald-500" />
+                              <span className="text-sm font-bold text-slate-700 dark:text-slate-300">Crushed Today</span>
+                              <motion.span 
+                                key={todayMilestones.filter(m => m.done).length}
+                                initial={{ scale: 1.5 }}
+                                animate={{ scale: 1 }}
+                                className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs font-bold"
+                              >
+                                {todayMilestones.filter(m => m.done).length}
+                              </motion.span>
+                            </div>
+                            <ChevronDown className={cn("w-4 h-4 text-slate-400 transition-transform", crushedExpanded && "rotate-180")} />
+                          </button>
+                          <AnimatePresence>
+                            {crushedExpanded && (
+                              <motion.div 
+                                initial={{ height: 0 }}
+                                animate={{ height: 'auto' }}
+                                exit={{ height: 0 }}
+                                className="overflow-hidden"
+                              >
+                                <div className="p-4 space-y-2 bg-white dark:bg-transparent">
+                                  {todayMilestones.filter(m => m.done).map(task => (
+                                    <div key={task.id} className="flex items-center gap-3 opacity-60">
+                                      <div className="w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center shrink-0">
+                                        <CheckCircle2 className="w-3 h-3 text-white" />
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <h4 className="text-sm text-slate-600 dark:text-slate-400 line-through truncate">{task.title}</h4>
+                                        <p className="text-[10px] text-slate-400">{task.goalTitle}</p>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
+                        </div>
                       )}
                     </div>
-                  </Card>
+
+                    <div className="lg:col-span-1">
+                      <div className="lg:hidden mb-4">
+                        <button 
+                          onClick={() => setShowMomentumMobile(!showMomentumMobile)}
+                          className="w-full py-3 rounded-xl border border-slate-200 dark:border-white/10 text-sm font-bold text-slate-600 dark:text-slate-300 flex items-center justify-center gap-2"
+                        >
+                          {showMomentumMobile ? 'Hide Momentum' : 'Show Momentum'}
+                          <ChevronDown className={cn("w-4 h-4 transition-transform", showMomentumMobile && "rotate-180")} />
+                        </button>
+                      </div>
+                      
+                      <div className={cn("space-y-6", !showMomentumMobile && "hidden lg:block")}>
+                        <div className="p-6 rounded-[1.5rem] bg-white dark:bg-white/[0.02] border border-slate-100 dark:border-white/5">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Flame className="w-5 h-5 text-orange-500" />
+                            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Daily Streak</span>
+                          </div>
+                          {Math.max(0, ...goals.map(g => g.streak)) > 0 ? (
+                            <>
+                              <div className="text-5xl font-black text-slate-900 dark:text-white mb-1">
+                                {Math.max(0, ...goals.map(g => g.streak))}
+                              </div>
+                              <p className="text-xs text-slate-500">
+                                {goals.reduce((prev, current) => (prev.streak > current.streak) ? prev : current).title} — {Math.max(0, ...goals.map(g => g.streak))} days
+                              </p>
+                            </>
+                          ) : (
+                            <p className="text-sm text-slate-500 italic mt-4">Start your streak today</p>
+                          )}
+                        </div>
+
+                        <div className="p-6 rounded-[1.5rem] bg-white dark:bg-white/[0.02] border border-slate-100 dark:border-white/5">
+                          <div className="flex items-center justify-between mb-4">
+                            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Goal Progress</span>
+                            <button onClick={() => setView('goals')} className="text-[10px] font-bold text-emerald-500 hover:text-emerald-600">see all →</button>
+                          </div>
+                          <div className="space-y-4">
+                            {goals.slice(0, 4).map(goal => {
+                              const cat = categories.find(c => c.name === goal.category);
+                              return (
+                                <div key={goal.id} className="space-y-1.5">
+                                  <div className="flex justify-between text-xs">
+                                    <span className="font-semibold text-slate-700 dark:text-slate-300 truncate max-w-[120px]">{goal.title}</span>
+                                    <span className="font-bold" style={{ color: cat?.color || '#10b981' }}>{Math.round(goal.progress)}%</span>
+                                  </div>
+                                  <div className="h-1 w-full bg-slate-100 dark:bg-white/5 rounded-full overflow-hidden">
+                                    <div className="h-full rounded-full" style={{ width: `${goal.progress}%`, backgroundColor: cat?.color || '#10b981' }} />
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        <div className="p-6 rounded-[1.5rem] bg-white dark:bg-white/[0.02] border border-slate-100 dark:border-white/5">
+                          <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-4 block">Score Breakdown</span>
+                          <div className="space-y-2 mb-4">
+                            {todayMilestones.filter(m => m.done).map(task => (
+                              <div key={task.id} className="flex justify-between text-xs text-slate-600 dark:text-slate-400">
+                                <span className="truncate max-w-[150px]">{task.title}</span>
+                                <span>+{getTaskPoints(task)}</span>
+                              </div>
+                            ))}
+                            {todayMilestones.filter(m => m.done).length === 0 && (
+                              <div className="text-xs text-slate-500 italic">No points earned yet</div>
+                            )}
+                          </div>
+                          <div className="pt-4 border-t border-slate-100 dark:border-white/5 flex justify-between items-end">
+                            <span className="text-sm font-bold text-slate-800 dark:text-slate-200">Total</span>
+                            <span className="text-2xl font-black text-slate-900 dark:text-white">{todayScore}</span>
+                          </div>
+                          <p className="text-[10px] text-slate-500 mt-2 italic">
+                            {todayScore > 100 ? "Exceptional." : todayScore > 50 ? "Strong day." : todayScore === 0 ? "Start now — every point counts." : "Keep building."}
+                          </p>
+                        </div>
+
+                        <div className="p-6 rounded-[1.5rem] bg-[var(--accent)]/10 border border-[var(--accent)]/20">
+                          <p className="text-sm font-medium" style={{ color: 'var(--accent)' }}>
+                            {todayProgress === 100 
+                              ? "100% complete. Your consistency is compounding."
+                              : todayProgress > 50 
+                                ? "Past halfway. The hardest part is behind you."
+                                : new Date().getHours() < 12 && todayProgress === 0
+                                  ? "The best time to start is right now."
+                                  : "Don't let the day close without finishing."}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
+              )}
             </motion.div>
           ) : view === 'dash' ? (
             <motion.div 
