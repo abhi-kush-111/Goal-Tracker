@@ -8,12 +8,7 @@ import {
   startOfMonth,
   eachDayOfInterval
 } from 'date-fns';
-
-const STORAGE_KEYS = {
-  GOALS: 'goalforge_goals',
-  CATEGORIES: 'goalforge_categories',
-  HABITS: 'goalforge_habits',
-};
+import { supabase } from './lib/supabase';
 
 export interface Habit {
   id: string;
@@ -152,114 +147,207 @@ const DEFAULT_CATEGORIES: Category[] = [
 ];
 
 export const storage = {
-  getGoals(): Goal[] {
-    const data = localStorage.getItem(STORAGE_KEYS.GOALS);
-    let goals: Goal[] = data ? JSON.parse(data) : [];
-    
-    // Ensure arrays exist
-    goals = goals.map(g => ({
-      ...g,
-      completed_dates: g.completed_dates || [],
-      milestones: (g.milestones || []).map(m => ({
-        ...m,
-        completed_dates: m.completed_dates || []
-      }))
-    }));
+  async getUser() {
+    const { data: { user } } = await supabase.auth.getUser();
+    return user;
+  },
+
+  async getGoals(): Promise<Goal[]> {
+    const user = await this.getUser();
+    if (!user) return [];
+
+    const { data: goalsData, error: goalsError } = await supabase
+      .from('goals')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false });
+
+    if (goalsError) {
+      console.error('Error fetching goals:', goalsError);
+      return [];
+    }
+
+    const { data: milestonesData, error: milestonesError } = await supabase
+      .from('milestones')
+      .select('*')
+      .eq('user_id', user.id);
+
+    if (milestonesError) {
+      console.error('Error fetching milestones:', milestonesError);
+    }
+
+    const goals: Goal[] = (goalsData || []).map(g => {
+      const goalMilestones = (milestonesData || [])
+        .filter(m => m.goal_id === g.id)
+        .map(m => ({
+          ...m,
+          completed_dates: m.completed_dates || []
+        }));
+
+      return {
+        ...g,
+        completed_dates: g.completed_dates || [],
+        milestones: goalMilestones
+      };
+    });
 
     return goals;
   },
 
-  saveGoals(goals: Goal[]) {
-    localStorage.setItem(STORAGE_KEYS.GOALS, JSON.stringify(goals));
+  async addGoal(goal: Goal) {
+    const user = await this.getUser();
+    if (!user) return;
+
+    const { error } = await supabase
+      .from('goals')
+      .insert({
+        id: goal.id,
+        user_id: user.id,
+        title: goal.title,
+        category: goal.category,
+        priority: goal.priority,
+        deadline: goal.deadline,
+        note: goal.note,
+        progress: 0,
+        streak: 0,
+        repeat: goal.repeat || 'None',
+        completed_dates: [],
+        created_at: new Date().toISOString()
+      });
+
+    if (error) console.error('Error adding goal:', error);
   },
 
-  getCategories(): Category[] {
-    const data = localStorage.getItem(STORAGE_KEYS.CATEGORIES);
-    if (!data) {
-      this.saveCategories(DEFAULT_CATEGORIES);
-      return DEFAULT_CATEGORIES;
-    }
-    return JSON.parse(data);
+  async updateGoal(id: string, updates: Partial<Goal>) {
+    const user = await this.getUser();
+    if (!user) return;
+
+    // Remove milestones from updates as they are in a separate table
+    const { milestones, ...goalUpdates } = updates;
+
+    const { error } = await supabase
+      .from('goals')
+      .update(goalUpdates)
+      .eq('id', id)
+      .eq('user_id', user.id);
+
+    if (error) console.error('Error updating goal:', error);
   },
 
-  saveCategories(categories: Category[]) {
-    localStorage.setItem(STORAGE_KEYS.CATEGORIES, JSON.stringify(categories));
+  async deleteGoal(id: string) {
+    const user = await this.getUser();
+    if (!user) return;
+
+    const { error } = await supabase
+      .from('goals')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', user.id);
+
+    if (error) console.error('Error deleting goal:', error);
   },
 
-  addGoal(goal: Goal) {
-    const goals = this.getGoals();
-    goals.unshift({ ...goal, progress: 0, streak: 0, milestones: [], created_at: new Date().toISOString(), completed_dates: [] });
-    this.saveGoals(goals);
-  },
+  async addMilestone(milestone: Milestone) {
+    const user = await this.getUser();
+    if (!user) return;
 
-  updateGoal(id: string, updates: Partial<Goal>) {
-    const goals = this.getGoals();
-    const index = goals.findIndex(g => g.id === id);
-    if (index !== -1) {
-      goals[index] = { ...goals[index], ...updates };
-      this.updateGoalProgress(goals[index]);
-      this.saveGoals(goals);
-    }
-  },
+    const { error } = await supabase
+      .from('milestones')
+      .insert({
+        id: milestone.id,
+        user_id: user.id,
+        goal_id: milestone.goal_id,
+        title: milestone.title,
+        done: false,
+        due_date: milestone.due_date,
+        note: milestone.note,
+        repeat: milestone.repeat || 'None',
+        completed_dates: [],
+        created_at: new Date().toISOString()
+      });
 
-  deleteGoal(id: string) {
-    const goals = this.getGoals().filter(g => g.id !== id);
-    this.saveGoals(goals);
-  },
-
-  addMilestone(milestone: Milestone) {
-    const goals = this.getGoals();
+    if (error) console.error('Error adding milestone:', error);
+    
+    // Update goal progress
+    const goals = await this.getGoals();
     const goal = goals.find(g => g.id === milestone.goal_id);
     if (goal) {
-      if (!goal.milestones) goal.milestones = [];
-      goal.milestones.push({ ...milestone, done: false, created_at: new Date().toISOString(), completed_dates: [] });
       this.updateGoalProgress(goal);
-      this.saveGoals(goals);
+      await this.updateGoal(goal.id, { progress: goal.progress });
     }
   },
 
-  toggleMilestone(id: string, date?: Date) {
-    const goals = this.getGoals();
-    for (const goal of goals) {
-      const milestone = goal.milestones?.find(m => m.id === id);
-      if (milestone) {
-        if (milestone.repeat && milestone.repeat !== 'None') {
-          const targetDate = date || new Date();
-          const isCompleted = isCompletedOnDate(milestone, targetDate);
-          if (isCompleted) {
-            milestone.completed_dates = (milestone.completed_dates || []).filter(d => {
-              const dDate = parseISO(d);
-              if (milestone.repeat === 'Daily') return !isSameDay(dDate, targetDate);
-              if (milestone.repeat === 'Weekly') return !isSameWeek(dDate, targetDate);
-              if (milestone.repeat === 'Monthly') return !isSameMonth(dDate, targetDate);
-              return true;
-            });
-          } else {
-            milestone.completed_dates = [...(milestone.completed_dates || []), targetDate.toISOString()];
-          }
-        } else {
-          milestone.done = !milestone.done;
-          if (milestone.done) {
-            milestone.completed_at = new Date().toISOString();
-          } else {
-            delete milestone.completed_at;
-          }
-        }
-        this.updateGoalProgress(goal);
-        this.saveGoals(goals);
-        break;
+  async toggleMilestone(id: string, date?: Date) {
+    const user = await this.getUser();
+    if (!user) return;
+
+    const { data: milestone, error: fetchError } = await supabase
+      .from('milestones')
+      .select('*')
+      .eq('id', id)
+      .eq('user_id', user.id)
+      .single();
+
+    if (fetchError || !milestone) return;
+
+    const updates: any = {};
+    if (milestone.repeat && milestone.repeat !== 'None') {
+      const targetDate = date || new Date();
+      const isCompleted = isCompletedOnDate(milestone, targetDate);
+      let completed_dates = milestone.completed_dates || [];
+      
+      if (isCompleted) {
+        completed_dates = completed_dates.filter((d: string) => {
+          const dDate = parseISO(d);
+          if (milestone.repeat === 'Daily') return !isSameDay(dDate, targetDate);
+          if (milestone.repeat === 'Weekly') return !isSameWeek(dDate, targetDate);
+          if (milestone.repeat === 'Monthly') return !isSameMonth(dDate, targetDate);
+          return true;
+        });
+      } else {
+        completed_dates = [...completed_dates, targetDate.toISOString()];
       }
+      updates.completed_dates = completed_dates;
+    } else {
+      updates.done = !milestone.done;
+      updates.completed_at = updates.done ? new Date().toISOString() : null;
+    }
+
+    await supabase
+      .from('milestones')
+      .update(updates)
+      .eq('id', id)
+      .eq('user_id', user.id);
+
+    // Update parent goal progress
+    const goals = await this.getGoals();
+    const goal = goals.find(g => g.id === milestone.goal_id);
+    if (goal) {
+      this.updateGoalProgress(goal);
+      await this.updateGoal(goal.id, { progress: goal.progress });
     }
   },
 
-  toggleGoalCompletion(id: string, date?: Date) {
-    const goals = this.getGoals();
-    const goal = goals.find(g => g.id === id);
-    if (goal && goal.repeat && goal.repeat !== 'None') {
+  async toggleGoalCompletion(id: string, date?: Date) {
+    const user = await this.getUser();
+    if (!user) return;
+
+    const { data: goal, error: fetchError } = await supabase
+      .from('goals')
+      .select('*')
+      .eq('id', id)
+      .eq('user_id', user.id)
+      .single();
+
+    if (fetchError || !goal) return;
+
+    if (goal.repeat && goal.repeat !== 'None') {
       const targetDate = date || new Date();
       const isCompleted = isCompletedOnDate(goal, targetDate);
+      let completed_dates = goal.completed_dates || [];
+      
       if (isCompleted) {
-        goal.completed_dates = (goal.completed_dates || []).filter(d => {
+        completed_dates = completed_dates.filter((d: string) => {
           const dDate = parseISO(d);
           if (goal.repeat === 'Daily') return !isSameDay(dDate, targetDate);
           if (goal.repeat === 'Weekly') return !isSameWeek(dDate, targetDate);
@@ -267,83 +355,129 @@ export const storage = {
           return true;
         });
       } else {
-        goal.completed_dates = [...(goal.completed_dates || []), targetDate.toISOString()];
+        completed_dates = [...completed_dates, targetDate.toISOString()];
       }
-      this.saveGoals(goals);
+      
+      await supabase
+        .from('goals')
+        .update({ completed_dates })
+        .eq('id', id)
+        .eq('user_id', user.id);
     }
   },
 
-  setMilestonesDone(ids: string[], done: boolean, date?: Date) {
-    const goals = this.getGoals();
-    let changed = false;
-    for (const goal of goals) {
-      if (!goal.milestones) continue;
-      let goalChanged = false;
-      for (const ms of goal.milestones) {
-        if (ids.includes(ms.id)) {
-          if (ms.repeat && ms.repeat !== 'None') {
-            const targetDate = date || new Date();
-            const isCompleted = isCompletedOnDate(ms, targetDate);
-            if (done && !isCompleted) {
-              ms.completed_dates = [...(ms.completed_dates || []), targetDate.toISOString()];
-              goalChanged = true;
-              changed = true;
-            } else if (!done && isCompleted) {
-              ms.completed_dates = (ms.completed_dates || []).filter(d => {
-                const dDate = parseISO(d);
-                if (ms.repeat === 'Daily') return !isSameDay(dDate, targetDate);
-                if (ms.repeat === 'Weekly') return !isSameWeek(dDate, targetDate);
-                if (ms.repeat === 'Monthly') return !isSameMonth(dDate, targetDate);
-                return true;
-              });
-              goalChanged = true;
-              changed = true;
-            }
-          } else {
-            if (ms.done !== done) {
-              ms.done = done;
-              if (done) {
-                ms.completed_at = new Date().toISOString();
-              } else {
-                delete ms.completed_at;
-              }
-              goalChanged = true;
-              changed = true;
-            }
-          }
+  async setMilestonesDone(ids: string[], done: boolean, date?: Date) {
+    const user = await this.getUser();
+    if (!user) return;
+
+    for (const id of ids) {
+      const { data: milestone } = await supabase
+        .from('milestones')
+        .select('*')
+        .eq('id', id)
+        .eq('user_id', user.id)
+        .single();
+
+      if (!milestone) continue;
+
+      const updates: any = {};
+      if (milestone.repeat && milestone.repeat !== 'None') {
+        const targetDate = date || new Date();
+        const isCompleted = isCompletedOnDate(milestone, targetDate);
+        let completed_dates = milestone.completed_dates || [];
+        
+        if (done && !isCompleted) {
+          completed_dates = [...completed_dates, targetDate.toISOString()];
+          updates.completed_dates = completed_dates;
+        } else if (!done && isCompleted) {
+          completed_dates = completed_dates.filter((d: string) => {
+            const dDate = parseISO(d);
+            if (milestone.repeat === 'Daily') return !isSameDay(dDate, targetDate);
+            if (milestone.repeat === 'Weekly') return !isSameWeek(dDate, targetDate);
+            if (milestone.repeat === 'Monthly') return !isSameMonth(dDate, targetDate);
+            return true;
+          });
+          updates.completed_dates = completed_dates;
+        }
+      } else {
+        if (milestone.done !== done) {
+          updates.done = done;
+          updates.completed_at = done ? new Date().toISOString() : null;
         }
       }
-      if (goalChanged) {
-        this.updateGoalProgress(goal);
+
+      if (Object.keys(updates).length > 0) {
+        await supabase
+          .from('milestones')
+          .update(updates)
+          .eq('id', id)
+          .eq('user_id', user.id);
       }
     }
-    if (changed) {
-      this.saveGoals(goals);
+
+    // Refresh all goals to update progress
+    const goals = await this.getGoals();
+    for (const goal of goals) {
+      this.updateGoalProgress(goal);
+      await this.updateGoal(goal.id, { progress: goal.progress });
     }
   },
 
-  deleteMilestone(id: string) {
-    const goals = this.getGoals();
-    for (const goal of goals) {
-      const index = goal.milestones?.findIndex(m => m.id === id);
-      if (index !== undefined && index !== -1) {
-        goal.milestones.splice(index, 1);
+  async deleteMilestone(id: string) {
+    const user = await this.getUser();
+    if (!user) return;
+
+    const { data: milestone } = await supabase
+      .from('milestones')
+      .select('goal_id')
+      .eq('id', id)
+      .eq('user_id', user.id)
+      .single();
+
+    const goalId = milestone?.goal_id;
+
+    await supabase
+      .from('milestones')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', user.id);
+
+    if (goalId) {
+      const goals = await this.getGoals();
+      const goal = goals.find(g => g.id === goalId);
+      if (goal) {
         this.updateGoalProgress(goal);
-        this.saveGoals(goals);
-        break;
+        await this.updateGoal(goal.id, { progress: goal.progress });
       }
     }
   },
 
-  updateMilestone(id: string, updates: Partial<Milestone>) {
-    const goals = this.getGoals();
-    for (const goal of goals) {
-      const milestone = goal.milestones?.find(m => m.id === id);
-      if (milestone) {
-        Object.assign(milestone, updates);
+  async updateMilestone(id: string, updates: Partial<Milestone>) {
+    const user = await this.getUser();
+    if (!user) return;
+
+    const { error } = await supabase
+      .from('milestones')
+      .update(updates)
+      .eq('id', id)
+      .eq('user_id', user.id);
+
+    if (error) console.error('Error updating milestone:', error);
+
+    // Update parent goal progress
+    const { data: milestone } = await supabase
+      .from('milestones')
+      .select('goal_id')
+      .eq('id', id)
+      .eq('user_id', user.id)
+      .single();
+
+    if (milestone?.goal_id) {
+      const goals = await this.getGoals();
+      const goal = goals.find(g => g.id === milestone.goal_id);
+      if (goal) {
         this.updateGoalProgress(goal);
-        this.saveGoals(goals);
-        break;
+        await this.updateGoal(goal.id, { progress: goal.progress });
       }
     }
   },
@@ -361,7 +495,6 @@ export const storage = {
       if (m.repeat && m.repeat !== 'None') {
         const totalOccurrences = countTotalOccurrences(m);
         const completedOccurrences = countCompletedOccurrences(m);
-        // Progress for this milestone is (completed / total) * its share of the goal
         totalProgress += (Math.min(completedOccurrences, totalOccurrences) / totalOccurrences) * milestoneShare;
       } else {
         if (m.done) totalProgress += milestoneShare;
@@ -371,103 +504,173 @@ export const storage = {
     goal.progress = Math.min(100, Math.round(totalProgress));
   },
 
-  addCategory(category: Category) {
-    const categories = this.getCategories();
-    categories.push(category);
-    this.saveCategories(categories);
-  },
+  async getCategories(): Promise<Category[]> {
+    const user = await this.getUser();
+    if (!user) return DEFAULT_CATEGORIES;
 
-  updateCategory(id: string, name: string, color: string, icon: string) {
-    const categories = this.getCategories();
-    const cat = categories.find(c => c.id === id);
-    if (cat) {
-      const oldName = cat.name;
-      cat.name = name;
-      cat.color = color;
-      cat.icon = icon;
-      this.saveCategories(categories);
+    const { data, error } = await supabase
+      .from('categories')
+      .select('*')
+      .eq('user_id', user.id);
 
-      // Update goals that use this category
-      if (oldName !== name) {
-        const goals = this.getGoals();
-        goals.forEach(g => {
-          if (g.category === oldName) g.category = name;
-        });
-        this.saveGoals(goals);
-      }
+    if (error) {
+      console.error('Error fetching categories:', error);
+      return DEFAULT_CATEGORIES;
     }
+
+    if (!data || data.length === 0) {
+      // Seed default categories if none exist
+      for (const cat of DEFAULT_CATEGORIES) {
+        await this.addCategory(cat);
+      }
+      return DEFAULT_CATEGORIES;
+    }
+
+    return data;
   },
 
-  deleteCategory(id: string) {
-    const categories = this.getCategories().filter(c => c.id !== id);
-    this.saveCategories(categories);
+  async addCategory(category: Category) {
+    const user = await this.getUser();
+    if (!user) return;
+
+    await supabase
+      .from('categories')
+      .insert({
+        id: category.id,
+        user_id: user.id,
+        name: category.name,
+        color: category.color,
+        icon: category.icon,
+        created_at: new Date().toISOString()
+      });
   },
 
-  // --- Habits ---
-  getHabits(): Habit[] {
-    const data = localStorage.getItem(STORAGE_KEYS.HABITS);
-    let habits: Habit[] = data ? JSON.parse(data) : [];
-    return habits.map(h => ({
+  async updateCategory(id: string, name: string, color: string, icon: string) {
+    const user = await this.getUser();
+    if (!user) return;
+
+    await supabase
+      .from('categories')
+      .update({ name, color, icon })
+      .eq('id', id)
+      .eq('user_id', user.id);
+  },
+
+  async deleteCategory(id: string) {
+    const user = await this.getUser();
+    if (!user) return;
+
+    await supabase
+      .from('categories')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', user.id);
+  },
+
+  async getHabits(): Promise<Habit[]> {
+    const user = await this.getUser();
+    if (!user) return [];
+
+    const { data, error } = await supabase
+      .from('habits')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching habits:', error);
+      return [];
+    }
+
+    return (data || []).map(h => ({
       ...h,
       completed_dates: h.completed_dates || [],
       streak: this.calculateHabitStreak(h)
     }));
   },
 
-  saveHabits(habits: Habit[]) {
-    localStorage.setItem(STORAGE_KEYS.HABITS, JSON.stringify(habits));
+  async addHabit(habit: Habit) {
+    const user = await this.getUser();
+    if (!user) return;
+
+    await supabase
+      .from('habits')
+      .insert({
+        id: habit.id,
+        user_id: user.id,
+        title: habit.title,
+        category: habit.category,
+        repeat: habit.repeat,
+        due_date: habit.due_date,
+        completed_dates: [],
+        streak: 0,
+        created_at: new Date().toISOString()
+      });
   },
 
-  addHabit(habit: Habit) {
-    const habits = this.getHabits();
-    habits.unshift({ 
-      ...habit, 
-      created_at: new Date().toISOString(), 
-      completed_dates: [],
-      streak: 0 
-    });
-    this.saveHabits(habits);
+  async updateHabit(id: string, updates: Partial<Habit>) {
+    const user = await this.getUser();
+    if (!user) return;
+
+    await supabase
+      .from('habits')
+      .update(updates)
+      .eq('id', id)
+      .eq('user_id', user.id);
   },
 
-  updateHabit(id: string, updates: Partial<Habit>) {
-    const habits = this.getHabits();
-    const index = habits.findIndex(h => h.id === id);
-    if (index !== -1) {
-      habits[index] = { ...habits[index], ...updates };
-      this.saveHabits(habits);
+  async deleteHabit(id: string) {
+    const user = await this.getUser();
+    if (!user) return;
+
+    await supabase
+      .from('habits')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', user.id);
+  },
+
+  async toggleHabit(id: string, date?: Date) {
+    const user = await this.getUser();
+    if (!user) return;
+
+    const { data: habit } = await supabase
+      .from('habits')
+      .select('*')
+      .eq('id', id)
+      .eq('user_id', user.id)
+      .single();
+
+    if (!habit) return;
+
+    const targetDate = date || new Date();
+    const isCompleted = isCompletedOnDate(habit, targetDate);
+    let completed_dates = habit.completed_dates || [];
+    
+    if (isCompleted) {
+      completed_dates = completed_dates.filter((d: string) => {
+        const dDate = parseISO(d);
+        if (habit.repeat === 'Daily') return !isSameDay(dDate, targetDate);
+        if (habit.repeat === 'Weekly') return !isSameWeek(dDate, targetDate);
+        if (habit.repeat === 'Monthly') return !isSameMonth(dDate, targetDate);
+        return true;
+      });
+    } else {
+      completed_dates = [...completed_dates, targetDate.toISOString()];
     }
-  },
-
-  deleteHabit(id: string) {
-    const habits = this.getHabits().filter(h => h.id !== id);
-    this.saveHabits(habits);
-  },
-
-  toggleHabit(id: string, date?: Date) {
-    const habits = this.getHabits();
-    const habit = habits.find(h => h.id === id);
-    if (habit) {
-      const targetDate = date || new Date();
-      const isCompleted = isCompletedOnDate(habit, targetDate);
-      if (isCompleted) {
-        habit.completed_dates = (habit.completed_dates || []).filter(d => {
-          const dDate = parseISO(d);
-          if (habit.repeat === 'Daily') return !isSameDay(dDate, targetDate);
-          if (habit.repeat === 'Weekly') return !isSameWeek(dDate, targetDate);
-          if (habit.repeat === 'Monthly') return !isSameMonth(dDate, targetDate);
-          return true;
-        });
-      } else {
-        habit.completed_dates = [...(habit.completed_dates || []), targetDate.toISOString()];
-      }
-      habit.streak = this.calculateHabitStreak(habit);
-      this.saveHabits(habits);
-    }
+    
+    const streak = this.calculateHabitStreak({ ...habit, completed_dates });
+    
+    await supabase
+      .from('habits')
+      .update({ completed_dates, streak })
+      .eq('id', id)
+      .eq('user_id', user.id);
   },
 
   calculateHabitStreak(habit: Habit): number {
     if (!habit.completed_dates || habit.completed_dates.length === 0) return 0;
-    if (habit.repeat !== 'Daily') return 0; // Streak only for daily for now
+    if (habit.repeat !== 'Daily') return 0;
 
     const sortedDates = [...habit.completed_dates]
       .map(d => startOfDay(parseISO(d)).getTime())
@@ -479,28 +682,22 @@ export const storage = {
     const today = startOfDay(new Date()).getTime();
     const yesterday = today - 86400000;
 
-    // If not completed today or yesterday, streak is broken
     if (uniqueDates[0] < yesterday) return 0;
 
     let streak = 0;
-    let current = uniqueDates[0];
-
     for (let i = 0; i < uniqueDates.length; i++) {
       if (i === 0) {
         streak = 1;
         continue;
       }
-      
       const prev = uniqueDates[i-1];
       const expected = prev - 86400000;
-      
       if (uniqueDates[i] === expected) {
         streak++;
       } else {
         break;
       }
     }
-
     return streak;
   }
 };
