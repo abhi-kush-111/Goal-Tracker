@@ -148,14 +148,20 @@ const DEFAULT_CATEGORIES: Category[] = [
 
 export const storage = {
   async getUser() {
-    const { data: { user } } = await supabase.auth.getUser();
+    const { data: { user }, error } = await supabase.auth.getUser();
+    if (error) console.error('Error getting user:', error);
+    if (!user) console.warn('No user found in storage.getUser()');
     return user;
   },
 
   async getGoals(): Promise<Goal[]> {
     const user = await this.getUser();
-    if (!user) return [];
+    if (!user) {
+      console.warn('getGoals: No user found, returning empty array');
+      return [];
+    }
 
+    console.log('Fetching goals for user:', user.id);
     const { data: goalsData, error: goalsError } = await supabase
       .from('goals')
       .select('*')
@@ -166,6 +172,8 @@ export const storage = {
       console.error('Error fetching goals:', goalsError);
       return [];
     }
+
+    console.log('Fetched goals count:', goalsData?.length || 0);
 
     const { data: milestonesData, error: milestonesError } = await supabase
       .from('milestones')
@@ -206,7 +214,7 @@ export const storage = {
         title: goal.title,
         category: goal.category,
         priority: goal.priority,
-        deadline: goal.deadline,
+        deadline: goal.deadline || null,
         note: goal.note,
         progress: 0,
         streak: 0,
@@ -215,7 +223,10 @@ export const storage = {
         created_at: new Date().toISOString()
       });
 
-    if (error) console.error('Error adding goal:', error);
+    if (error) {
+      console.error('Error adding goal:', error);
+      alert('Failed to save goal: ' + error.message);
+    }
   },
 
   async updateGoal(id: string, updates: Partial<Goal>) {
@@ -259,14 +270,17 @@ export const storage = {
         goal_id: milestone.goal_id,
         title: milestone.title,
         done: false,
-        due_date: milestone.due_date,
+        due_date: milestone.due_date || null,
         note: milestone.note,
         repeat: milestone.repeat || 'None',
         completed_dates: [],
         created_at: new Date().toISOString()
       });
 
-    if (error) console.error('Error adding milestone:', error);
+    if (error) {
+      console.error('Error adding milestone:', error);
+      alert('Failed to save milestone: ' + error.message);
+    }
     
     // Update goal progress
     const goals = await this.getGoals();
@@ -593,7 +607,7 @@ export const storage = {
     const user = await this.getUser();
     if (!user) return;
 
-    await supabase
+    const { error } = await supabase
       .from('habits')
       .insert({
         id: habit.id,
@@ -601,11 +615,16 @@ export const storage = {
         title: habit.title,
         category: habit.category,
         repeat: habit.repeat,
-        due_date: habit.due_date,
+        due_date: habit.due_date || null,
         completed_dates: [],
         streak: 0,
         created_at: new Date().toISOString()
       });
+
+    if (error) {
+      console.error('Error adding habit:', error);
+      alert('Failed to save habit: ' + error.message);
+    }
   },
 
   async updateHabit(id: string, updates: Partial<Habit>) {

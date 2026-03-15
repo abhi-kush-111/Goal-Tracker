@@ -721,10 +721,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    fetchGoals();
-    fetchCategories();
-    setLoading(false);
-  }, []);
+    if (session) {
+      fetchGoals();
+      fetchCategories();
+      setLoading(false);
+    } else if (!isSessionLoading) {
+      setLoading(false);
+    }
+  }, [session, isSessionLoading]);
 
   const getTaskPoints = (task: any) => {
     return 10;
@@ -856,25 +860,37 @@ export default function App() {
 
   const handleAddGoal = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newGoal.title) return;
-
-    if (editingGoal) {
-      await storage.updateGoal(editingGoal.id, newGoal);
-      setEditingGoal(null);
-    } else {
-      const id = uid();
-      await storage.addGoal({ 
-        ...newGoal, 
-        id, 
-        progress: 0, 
-        streak: 0, 
-        milestones: [],
-        last_reset_at: new Date().toISOString()
-      });
+    console.log('Adding goal:', newGoal);
+    if (!newGoal.title) {
+      console.warn('Goal title is missing');
+      return;
     }
-    setIsAddingGoal(false);
-    setNewGoal({ title: '', category: categories[0]?.name || 'Health', priority: 'Medium', deadline: '', note: '', repeat: 'None' });
-    await fetchGoals();
+
+    try {
+      if (editingGoal) {
+        console.log('Updating goal:', editingGoal.id);
+        await storage.updateGoal(editingGoal.id, newGoal);
+        setEditingGoal(null);
+      } else {
+        const id = uid();
+        console.log('Creating new goal with ID:', id);
+        await storage.addGoal({ 
+          ...newGoal, 
+          id, 
+          progress: 0, 
+          streak: 0, 
+          milestones: [],
+          last_reset_at: new Date().toISOString()
+        });
+      }
+      setIsAddingGoal(false);
+      setNewGoal({ title: '', category: categories[0]?.name || 'Health', priority: 'Medium', deadline: '', note: '', repeat: 'None' });
+      console.log('Fetching goals after save...');
+      await fetchGoals();
+    } catch (error) {
+      console.error('Error in handleAddGoal:', error);
+      alert('An unexpected error occurred while saving.');
+    }
   };
 
   const handleDeleteGoal = async (id: string) => {
