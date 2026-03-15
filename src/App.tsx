@@ -78,13 +78,15 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { storage, isDueOnDate, isCompletedOnDate, type Goal, type Category, type Milestone, type Habit } from './storage';
 import { Logo, LogoFull } from './components/Logo';
+import { supabase } from './lib/supabase';
+import { Auth } from './components/Auth';
 
 // --- Utility ---
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-const uid = () => Math.random().toString(36).slice(2, 11);
+const uid = () => crypto.randomUUID();
 
 const isValidDate = (dateStr: string | undefined | null) => {
   if (!dateStr) return false;
@@ -287,7 +289,7 @@ const AssignTasksView = ({ goals, onClose }: { goals: Goal[], onClose: () => voi
     setActiveId(event.active.id);
   };
 
-  const handleDragEnd = (event: DragEndEvent) => {
+  const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
     setActiveId(null);
     
@@ -301,7 +303,7 @@ const AssignTasksView = ({ goals, onClose }: { goals: Goal[], onClose: () => voi
       }
       
       // Update storage
-      storage.updateMilestone(milestoneId, { due_date: newDate });
+      await storage.updateMilestone(milestoneId, { due_date: newDate });
       
       // Update local state for immediate feedback
       setLocalGoals(prev => prev.map(g => ({
@@ -507,6 +509,29 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 };
 
 export default function App() {
+  const [session, setSession] = useState<any>(null);
+  const [isSessionLoading, setIsSessionLoading] = useState(true);
+
+  useEffect(() => {
+    if (!supabase) {
+      setIsSessionLoading(false);
+      return;
+    }
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setIsSessionLoading(false);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
   const [goals, setGoals] = useState<Goal[]>([]);
   const [habits, setHabits] = useState<Habit[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -626,7 +651,7 @@ export default function App() {
     setActiveCalendarDragId(event.active.id);
   };
 
-  const handleCalendarDragEnd = (event: any) => {
+  const handleCalendarDragEnd = async (event: any) => {
     const { active, over } = event;
     setActiveCalendarDragId(null);
     
@@ -634,8 +659,8 @@ export default function App() {
       const milestoneId = active.id as string;
       const targetDate = over.id as string;
       
-      storage.updateMilestone(milestoneId, { due_date: targetDate });
-      fetchGoals();
+      await storage.updateMilestone(milestoneId, { due_date: targetDate });
+      await fetchGoals();
     }
   };
 
@@ -792,53 +817,53 @@ export default function App() {
     due_date: ''
   });
 
-  const fetchGoals = () => {
-    setGoals(storage.getGoals());
-    setHabits(storage.getHabits());
+  const fetchGoals = async () => {
+    setGoals(await storage.getGoals());
+    setHabits(await storage.getHabits());
   };
 
-  const fetchCategories = () => {
-    const data = storage.getCategories();
+  const fetchCategories = async () => {
+    const data = await storage.getCategories();
     setCategories(data);
     if (data.length > 0) {
       setNewGoal(prev => ({ ...prev, category: prev.category || data[0].name }));
     }
   };
 
-  const handleAddCategory = (e: React.FormEvent) => {
+  const handleAddCategory = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCategory.name) return;
-    storage.addCategory({ ...newCategory, id: uid() });
+    await storage.addCategory({ ...newCategory, id: uid() });
     setIsAddingCategory(false);
     setNewCategory({ name: '', color: '#10b981', icon: '🎯' });
     fetchCategories();
   };
 
-  const handleEditCategory = (e: React.FormEvent) => {
+  const handleEditCategory = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingCategory) return;
-    storage.updateCategory(editingCategory.id, editingCategory.name, editingCategory.color, editingCategory.icon);
+    await storage.updateCategory(editingCategory.id, editingCategory.name, editingCategory.color, editingCategory.icon);
     setEditingCategory(null);
     fetchCategories();
-    fetchGoals(); // Goals might have updated category names
+    await fetchGoals(); // Goals might have updated category names
   };
 
-  const handleDeleteCategory = (id: string) => {
+  const handleDeleteCategory = async (id: string) => {
     if (!confirm("Are you sure you want to delete this category? Goals using it will remain but won't have a valid category.")) return;
-    storage.deleteCategory(id);
+    await storage.deleteCategory(id);
     fetchCategories();
   };
 
-  const handleAddGoal = (e: React.FormEvent) => {
+  const handleAddGoal = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newGoal.title) return;
 
     if (editingGoal) {
-      storage.updateGoal(editingGoal.id, newGoal);
+      await storage.updateGoal(editingGoal.id, newGoal);
       setEditingGoal(null);
     } else {
       const id = uid();
-      storage.addGoal({ 
+      await storage.addGoal({ 
         ...newGoal, 
         id, 
         progress: 0, 
@@ -849,28 +874,28 @@ export default function App() {
     }
     setIsAddingGoal(false);
     setNewGoal({ title: '', category: categories[0]?.name || 'Health', priority: 'Medium', deadline: '', note: '', repeat: 'None' });
-    fetchGoals();
+    await fetchGoals();
   };
 
-  const handleDeleteGoal = (id: string) => {
+  const handleDeleteGoal = async (id: string) => {
     if (!confirm("Are you sure you want to delete this goal?")) return;
-    storage.deleteGoal(id);
+    await storage.deleteGoal(id);
     if (activeGoalId === id) {
       setView('goals');
       setActiveGoalId(null);
     }
-    fetchGoals();
+    await fetchGoals();
   };
 
-  const handleAddHabit = (e: React.FormEvent) => {
+  const handleAddHabit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newHabit.title) return;
 
     if (editingHabit) {
-      storage.updateHabit(editingHabit.id, newHabit);
+      await storage.updateHabit(editingHabit.id, newHabit);
       setEditingHabit(null);
     } else {
-      storage.addHabit({
+      await storage.addHabit({
         id: uid() as string,
         title: newHabit.title as string,
         category: newHabit.category as string,
@@ -883,21 +908,21 @@ export default function App() {
     }
     setIsAddingHabit(false);
     setNewHabit({ title: '', category: categories[0]?.name || 'Health', repeat: 'Daily', due_date: '' });
-    fetchGoals();
+    await fetchGoals();
   };
 
-  const handleDeleteHabit = (id: string) => {
+  const handleDeleteHabit = async (id: string) => {
     if (!confirm("Are you sure you want to delete this habit?")) return;
-    storage.deleteHabit(id);
-    fetchGoals();
+    await storage.deleteHabit(id);
+    await fetchGoals();
   };
 
-  const handleAddMilestone = (e: React.FormEvent) => {
+  const handleAddMilestone = async (e: React.FormEvent) => {
     e.preventDefault();
     const targetGoalId = activeGoalId || newMilestone.goal_id;
     if (!newMilestone.title || !targetGoalId) return;
 
-    storage.addMilestone({ 
+    await storage.addMilestone({ 
       ...newMilestone, 
       goal_id: targetGoalId, 
       id: uid(), 
@@ -905,22 +930,22 @@ export default function App() {
     });
     setIsAddingMilestone(false);
     setNewMilestone({ title: '', due_date: '', note: '', goal_id: '', repeat: 'None' });
-    fetchGoals();
+    await fetchGoals();
   };
 
-  const toggleMilestone = (id: string) => {
-    storage.toggleMilestone(id);
-    fetchGoals();
+  const toggleMilestone = async (id: string) => {
+    await storage.toggleMilestone(id);
+    await fetchGoals();
   };
 
-  const handleMarkAllDone = (ids: string[]) => {
-    storage.setMilestonesDone(ids, true);
-    fetchGoals();
+  const handleMarkAllDone = async (ids: string[]) => {
+    await storage.setMilestonesDone(ids, true);
+    await fetchGoals();
   };
 
-  const deleteMilestone = (id: string) => {
-    storage.deleteMilestone(id);
-    fetchGoals();
+  const deleteMilestone = async (id: string) => {
+    await storage.deleteMilestone(id);
+    await fetchGoals();
   };
 
   const activeGoal = useMemo(() => goals.find(g => g.id === activeGoalId), [goals, activeGoalId]);
@@ -1012,15 +1037,15 @@ export default function App() {
     return '#C8F55A';
   };
 
-  const handleToggleToday = (ms: any) => {
+  const handleToggleToday = async (ms: any) => {
     if (ms.isHabit) {
-      storage.toggleHabit(ms.id, new Date());
+      await storage.toggleHabit(ms.id, new Date());
     } else if (ms.isGoalAsMilestone) {
-      storage.toggleGoalCompletion(ms.id, new Date());
+      await storage.toggleGoalCompletion(ms.id, new Date());
     } else {
-      storage.toggleMilestone(ms.id, new Date());
+      await storage.toggleMilestone(ms.id, new Date());
     }
-    fetchGoals();
+    await fetchGoals();
     
     // Check if this was the last task
     const isCompleting = !ms.done;
@@ -1035,7 +1060,7 @@ export default function App() {
     }
   };
 
-  const handleArenaComplete = (task: any, e?: React.MouseEvent | TouchEvent | PointerEvent) => {
+  const handleArenaComplete = async (task: any, e?: React.MouseEvent | TouchEvent | PointerEvent) => {
     if (!task.done) {
       setBarPulse(true);
       setTimeout(() => setBarPulse(false), 300);
@@ -1140,6 +1165,22 @@ export default function App() {
     });
   }, [allCalendarItems]);
 
+  if (isSessionLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center dark:bg-[#0c1020] bg-white">
+        <motion.div 
+          animate={{ rotate: 360 }}
+          transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+          className="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full"
+        />
+      </div>
+    );
+  }
+
+  if (supabase && !session) {
+    return <Auth />;
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center dark:bg-[#0c1020] bg-white">
@@ -1198,7 +1239,7 @@ export default function App() {
               return (
                 <button 
                   key={item.id}
-                  onClick={() => { setView(item.id as any); setActiveGoalId(null); setIsMobileMenuOpen(false); }}
+                  onClick={async () => { setView(item.id as any); setActiveGoalId(null); setIsMobileMenuOpen(false); }}
                   className={cn(
                     "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group",
                     view === item.id 
@@ -1230,7 +1271,7 @@ export default function App() {
             return (
               <button 
                 key={goal.id}
-                onClick={() => {
+                onClick={async () => {
                   setActiveGoalId(goal.id);
                   setView('detail');
                   setIsMobileMenuOpen(false);
@@ -1251,7 +1292,7 @@ export default function App() {
           })}
 
           <button 
-            onClick={() => { setIsAddingGoal(true); setIsMobileMenuOpen(false); }}
+            onClick={async () => { setIsAddingGoal(true); setIsMobileMenuOpen(false); }}
             className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl dark:text-slate-500 text-slate-600 hover:bg-emerald-500/5 hover:text-emerald-500 transition-all duration-200 mt-4 border border-dashed dark:border-white/5 border-slate-200 hover:border-emerald-500/20"
           >
             <Plus className="w-4 h-4" />
@@ -1269,6 +1310,19 @@ export default function App() {
               {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
             </button>
           </div>
+          
+          {supabase && session && (
+            <div className="flex items-center justify-between px-2">
+              <span className="text-xs font-semibold dark:text-slate-500 text-slate-600">Account</span>
+              <button
+                onClick={() => supabase.auth.signOut()}
+                className="text-xs font-bold text-rose-500 hover:text-rose-400 transition-colors px-2 py-1"
+              >
+                Sign Out
+              </button>
+            </div>
+          )}
+
           <div className="dark:bg-emerald-500/5 bg-emerald-50/50 border dark:border-emerald-500/10 border-emerald-500/10 rounded-2xl p-4">
             <div className="flex justify-between items-end mb-2">
               <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-500/60">Overall</span>
@@ -1346,7 +1400,7 @@ export default function App() {
                             
                             <div className="flex flex-col md:flex-row items-center justify-center gap-4">
                               <button 
-                                onClick={() => {
+                                onClick={async () => {
                                   handleToggleToday(mainTask);
                                   if (todayMilestones.filter(m => !m.done).length <= 1) {
                                     setIsFocusMode(false);
@@ -1462,7 +1516,7 @@ export default function App() {
                   </div>
                   
                   <div className="flex flex-wrap justify-center gap-4">
-                    <button onClick={() => {
+                    <button onClick={async () => {
                       navigator.clipboard.writeText(`✅ GoalForge Daily Summary — ${format(new Date(), 'MMM d')}\n${todayScore} points\n${todayMilestones.length} tasks completed\nStreak: ${Math.max(0, ...goals.map(g => g.streak))} days`);
                     }} className="px-8 py-4 bg-white/10 text-white rounded-2xl font-bold hover:bg-white/20 transition-colors">Copy Summary</button>
                     <button onClick={() => setView('calendar')} className="px-8 py-4 bg-[var(--accent)] text-black rounded-2xl font-bold hover:opacity-90 transition-opacity">Plan Tomorrow →</button>
@@ -2117,7 +2171,7 @@ export default function App() {
                           <div className="flex justify-between items-center mb-8">
                             <h3 className="text-sm font-bold uppercase tracking-widest dark:text-slate-500 text-slate-600">Today's Focus</h3>
                             <button 
-                              onClick={() => { setView('calendar'); setSelectedDate(new Date()); setActiveGoalId(null); }}
+                              onClick={async () => { setView('calendar'); setSelectedDate(new Date()); setActiveGoalId(null); }}
                               className="text-[10px] font-bold text-emerald-500 hover:underline uppercase tracking-widest"
                             >
                               Calendar
@@ -2132,13 +2186,13 @@ export default function App() {
                               todayMilestones.map(ms => (
                                 <div key={ms.id} className="flex items-center gap-3 group">
                                   <button 
-                                    onClick={() => {
+                                    onClick={async () => {
                                       if (ms.isHabit) {
-                                        storage.toggleHabit(ms.id, new Date());
-                                        fetchGoals();
+                                        await storage.toggleHabit(ms.id, new Date());
+                                        await fetchGoals();
                                       } else if (ms.isGoalAsMilestone) {
-                                        storage.toggleGoalCompletion(ms.id, new Date());
-                                        fetchGoals();
+                                        await storage.toggleGoalCompletion(ms.id, new Date());
+                                        await fetchGoals();
                                       } else {
                                         toggleMilestone(ms.id);
                                       }
@@ -2321,7 +2375,7 @@ export default function App() {
                           </div>
                           {(!goal.repeat || goal.repeat === 'None') && (
                             <button 
-                              onClick={() => {
+                              onClick={async () => {
                                 setActiveGoalId(goal.id);
                                 setView('detail');
                               }}
@@ -2648,7 +2702,7 @@ export default function App() {
                           </div>
                           <div className="flex gap-1">
                             <button 
-                              onClick={() => {
+                              onClick={async () => {
                                 setEditingHabit(habit);
                                 setNewHabit(habit);
                                 setIsAddingHabit(true);
@@ -2680,9 +2734,9 @@ export default function App() {
                             </div>
                           </div>
                           <button 
-                            onClick={() => {
-                              storage.toggleHabit(habit.id);
-                              fetchGoals();
+                            onClick={async () => {
+                              await storage.toggleHabit(habit.id);
+                              await fetchGoals();
                             }}
                             className={cn(
                               "w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-300 shadow-lg",
@@ -2812,7 +2866,7 @@ export default function App() {
                           </button>
                         )}
                         <button 
-                          onClick={() => {
+                          onClick={async () => {
                             setNewMilestone({ ...newMilestone, due_date: format(selectedDate, 'yyyy-MM-dd') });
                             setIsAddingMilestone(true);
                           }}
@@ -2851,16 +2905,16 @@ export default function App() {
                             >
                               <div className="flex items-start gap-3">
                                 <button 
-                                  onClick={() => {
+                                  onClick={async () => {
                                     if (ms.isHabit) {
-                                      storage.toggleHabit(ms.id, selectedDate);
-                                      fetchGoals();
+                                      await storage.toggleHabit(ms.id, selectedDate);
+                                      await fetchGoals();
                                     } else if (ms.isGoalAsMilestone) {
-                                      storage.toggleGoalCompletion(ms.id, selectedDate);
-                                      fetchGoals();
+                                      await storage.toggleGoalCompletion(ms.id, selectedDate);
+                                      await fetchGoals();
                                     } else {
-                                      storage.toggleMilestone(ms.id, selectedDate);
-                                      fetchGoals();
+                                      await storage.toggleMilestone(ms.id, selectedDate);
+                                      await fetchGoals();
                                     }
                                   }}
                                   className={cn(
@@ -2970,8 +3024,8 @@ export default function App() {
           ) : view === 'assign-tasks' ? (
           <AssignTasksView 
             goals={goals} 
-            onClose={() => {
-              fetchGoals();
+            onClose={async () => {
+              await fetchGoals();
               setView('calendar');
             }} 
           />
@@ -3040,7 +3094,7 @@ export default function App() {
                     Done
                   </button>
                   <button 
-                    onClick={() => {
+                    onClick={async () => {
                       const defaultLayout: WidgetConfig[] = [
                         { id: 'stats', visible: true, label: 'Quick Stats' },
                         { id: 'progress', visible: true, label: 'Goal Progress' },
@@ -3161,7 +3215,7 @@ export default function App() {
                   <div className="flex gap-4 pt-4">
                     <button 
                       type="button"
-                      onClick={() => {
+                      onClick={async () => {
                         setIsAddingGoal(false);
                         setEditingGoal(null);
                         setNewGoal({ title: '', category: categories[0]?.name || 'Health', priority: 'Medium', deadline: '', note: '', repeat: 'None' });
@@ -3192,7 +3246,7 @@ export default function App() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => {
+              onClick={async () => {
                 setIsAddingHabit(false);
                 setEditingHabit(null);
                 setNewHabit({ title: '', category: categories[0]?.name || 'Health', repeat: 'Daily', due_date: '' });
@@ -3263,7 +3317,7 @@ export default function App() {
                   <div className="flex gap-4 pt-4">
                     <button 
                       type="button"
-                      onClick={() => {
+                      onClick={async () => {
                         setIsAddingHabit(false);
                         setEditingHabit(null);
                         setNewHabit({ title: '', category: categories[0]?.name || 'Health', repeat: 'Daily', due_date: '' });
@@ -3395,7 +3449,7 @@ export default function App() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => { setIsAddingCategory(false); setEditingCategory(null); }}
+              onClick={async () => { setIsAddingCategory(false); setEditingCategory(null); }}
               className="absolute inset-0 bg-black/80 backdrop-blur-sm"
             />
             <motion.div 
@@ -3452,7 +3506,7 @@ export default function App() {
                   <div className="flex gap-4 pt-4">
                     <button 
                       type="button"
-                      onClick={() => { setIsAddingCategory(false); setEditingCategory(null); }}
+                      onClick={async () => { setIsAddingCategory(false); setEditingCategory(null); }}
                       className="flex-1 py-3 rounded-xl dark:bg-white/5 bg-slate-100 dark:text-slate-400 dark:text-slate-500 text-slate-600 font-bold text-sm hover:dark:bg-white/10 bg-slate-200 transition-colors"
                     >
                       Cancel
