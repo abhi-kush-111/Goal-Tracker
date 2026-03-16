@@ -147,11 +147,18 @@ const DEFAULT_CATEGORIES: Category[] = [
 ];
 
 export const storage = {
+  _user: null as any,
+
   async getUser() {
+    if (this._user) return this._user;
     const { data: { user }, error } = await supabase.auth.getUser();
     if (error) console.error('Error getting user:', error);
-    if (!user) console.warn('No user found in storage.getUser()');
+    if (user) this._user = user;
     return user;
+  },
+
+  clearCache() {
+    this._user = null;
   },
 
   async getGoals(): Promise<Goal[]> {
@@ -161,31 +168,37 @@ export const storage = {
       return [];
     }
 
-    console.log('Fetching goals for user:', user.id);
-    const { data: goalsData, error: goalsError } = await supabase
-      .from('goals')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
+    console.log('Fetching goals and milestones for user:', user.id);
+    
+    // Fetch goals and milestones in parallel
+    const [goalsResult, milestonesResult] = await Promise.all([
+      supabase
+        .from('goals')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('milestones')
+        .select('*')
+        .eq('user_id', user.id)
+    ]);
 
-    if (goalsError) {
-      console.error('Error fetching goals:', goalsError);
+    if (goalsResult.error) {
+      console.error('Error fetching goals:', goalsResult.error);
       return [];
     }
 
-    console.log('Fetched goals count:', goalsData?.length || 0);
-
-    const { data: milestonesData, error: milestonesError } = await supabase
-      .from('milestones')
-      .select('*')
-      .eq('user_id', user.id);
-
-    if (milestonesError) {
-      console.error('Error fetching milestones:', milestonesError);
+    if (milestonesResult.error) {
+      console.error('Error fetching milestones:', milestonesResult.error);
     }
 
-    const goals: Goal[] = (goalsData || []).map(g => {
-      const goalMilestones = (milestonesData || [])
+    const goalsData = goalsResult.data || [];
+    const milestonesData = milestonesResult.data || [];
+
+    console.log('Fetched goals count:', goalsData.length);
+
+    const goals: Goal[] = goalsData.map(g => {
+      const goalMilestones = milestonesData
         .filter(m => m.goal_id === g.id)
         .map(m => ({
           ...m,

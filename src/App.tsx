@@ -527,6 +527,7 @@ export default function App() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
+      if (!session) storage.clearCache();
     });
 
     return () => subscription.unsubscribe();
@@ -613,6 +614,7 @@ export default function App() {
   const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
   const [editingHabit, setEditingHabit] = useState<Habit | null>(null);
   const [isAddingMilestone, setIsAddingMilestone] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [currentMonth, setCurrentMonth] = useState(new Date());
@@ -722,9 +724,15 @@ export default function App() {
 
   useEffect(() => {
     if (session) {
-      fetchGoals();
-      fetchCategories();
-      setLoading(false);
+      const loadData = async () => {
+        setLoading(true);
+        await Promise.all([
+          fetchGoals(),
+          fetchCategories()
+        ]);
+        setLoading(false);
+      };
+      loadData();
     } else if (!isSessionLoading) {
       setLoading(false);
     }
@@ -822,8 +830,12 @@ export default function App() {
   });
 
   const fetchGoals = async () => {
-    setGoals(await storage.getGoals());
-    setHabits(await storage.getHabits());
+    const [goalsData, habitsData] = await Promise.all([
+      storage.getGoals(),
+      storage.getHabits()
+    ]);
+    setGoals(goalsData);
+    setHabits(habitsData);
   };
 
   const fetchCategories = async () => {
@@ -860,12 +872,15 @@ export default function App() {
 
   const handleAddGoal = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSaving) return;
+    
     console.log('Adding goal:', newGoal);
     if (!newGoal.title) {
       console.warn('Goal title is missing');
       return;
     }
 
+    setIsSaving(true);
     try {
       if (editingGoal) {
         console.log('Updating goal:', editingGoal.id);
@@ -890,6 +905,8 @@ export default function App() {
     } catch (error) {
       console.error('Error in handleAddGoal:', error);
       alert('An unexpected error occurred while saving.');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -905,26 +922,33 @@ export default function App() {
 
   const handleAddHabit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newHabit.title) return;
+    if (isSaving || !newHabit.title) return;
 
-    if (editingHabit) {
-      await storage.updateHabit(editingHabit.id, newHabit);
-      setEditingHabit(null);
-    } else {
-      await storage.addHabit({
-        id: uid() as string,
-        title: newHabit.title as string,
-        category: newHabit.category as string,
-        repeat: newHabit.repeat as any,
-        due_date: newHabit.due_date,
-        created_at: new Date().toISOString(),
-        completed_dates: [],
-        streak: 0
-      });
+    setIsSaving(true);
+    try {
+      if (editingHabit) {
+        await storage.updateHabit(editingHabit.id, newHabit);
+        setEditingHabit(null);
+      } else {
+        await storage.addHabit({
+          id: uid() as string,
+          title: newHabit.title as string,
+          category: newHabit.category as string,
+          repeat: newHabit.repeat as any,
+          due_date: newHabit.due_date,
+          created_at: new Date().toISOString(),
+          completed_dates: [],
+          streak: 0
+        });
+      }
+      setIsAddingHabit(false);
+      setNewHabit({ title: '', category: categories[0]?.name || 'Health', repeat: 'Daily', due_date: '' });
+      await fetchGoals();
+    } catch (error) {
+      console.error('Error in handleAddHabit:', error);
+    } finally {
+      setIsSaving(false);
     }
-    setIsAddingHabit(false);
-    setNewHabit({ title: '', category: categories[0]?.name || 'Health', repeat: 'Daily', due_date: '' });
-    await fetchGoals();
   };
 
   const handleDeleteHabit = async (id: string) => {
@@ -936,17 +960,24 @@ export default function App() {
   const handleAddMilestone = async (e: React.FormEvent) => {
     e.preventDefault();
     const targetGoalId = activeGoalId || newMilestone.goal_id;
-    if (!newMilestone.title || !targetGoalId) return;
+    if (isSaving || !newMilestone.title || !targetGoalId) return;
 
-    await storage.addMilestone({ 
-      ...newMilestone, 
-      goal_id: targetGoalId, 
-      id: uid(), 
-      done: false 
-    });
-    setIsAddingMilestone(false);
-    setNewMilestone({ title: '', due_date: '', note: '', goal_id: '', repeat: 'None' });
-    await fetchGoals();
+    setIsSaving(true);
+    try {
+      await storage.addMilestone({ 
+        ...newMilestone, 
+        goal_id: targetGoalId, 
+        id: uid(), 
+        done: false 
+      });
+      setIsAddingMilestone(false);
+      setNewMilestone({ title: '', due_date: '', note: '', goal_id: '', repeat: 'None' });
+      await fetchGoals();
+    } catch (error) {
+      console.error('Error in handleAddMilestone:', error);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const toggleMilestone = async (id: string) => {
@@ -3242,9 +3273,13 @@ export default function App() {
                     </button>
                     <button 
                       type="submit"
-                      className="flex-1 py-3 rounded-xl bg-emerald-500 text-[#052e1a] font-bold text-sm hover:bg-emerald-400 transition-colors shadow-lg shadow-emerald-500/20"
+                      disabled={isSaving}
+                      className={cn(
+                        "flex-1 py-3 rounded-xl bg-emerald-500 text-[#052e1a] font-bold text-sm transition-all shadow-lg shadow-emerald-500/20",
+                        isSaving ? "opacity-50 cursor-not-allowed" : "hover:bg-emerald-400"
+                      )}
                     >
-                      {editingGoal ? 'Save Changes' : 'Create Goal'}
+                      {isSaving ? 'Saving...' : (editingGoal ? 'Save Changes' : 'Create Goal')}
                     </button>
                   </div>
                 </form>
@@ -3344,9 +3379,13 @@ export default function App() {
                     </button>
                     <button 
                       type="submit"
-                      className="flex-1 py-3 rounded-xl bg-emerald-500 text-[#052e1a] font-bold text-sm hover:bg-emerald-400 transition-colors shadow-lg shadow-emerald-500/20"
+                      disabled={isSaving}
+                      className={cn(
+                        "flex-1 py-3 rounded-xl bg-emerald-500 text-[#052e1a] font-bold text-sm transition-all shadow-lg shadow-emerald-500/20",
+                        isSaving ? "opacity-50 cursor-not-allowed" : "hover:bg-emerald-400"
+                      )}
                     >
-                      {editingHabit ? 'Save Changes' : 'Create Habit'}
+                      {isSaving ? 'Saving...' : (editingHabit ? 'Save Changes' : 'Create Habit')}
                     </button>
                   </div>
                 </form>
@@ -3445,9 +3484,13 @@ export default function App() {
                     </button>
                     <button 
                       type="submit"
-                      className="flex-1 py-3 rounded-xl bg-emerald-500 text-[#052e1a] font-bold text-sm hover:bg-emerald-400 transition-colors shadow-lg shadow-emerald-500/20"
+                      disabled={isSaving}
+                      className={cn(
+                        "flex-1 py-3 rounded-xl bg-emerald-500 text-[#052e1a] font-bold text-sm transition-all shadow-lg shadow-emerald-500/20",
+                        isSaving ? "opacity-50 cursor-not-allowed" : "hover:bg-emerald-400"
+                      )}
                     >
-                      Add
+                      {isSaving ? 'Saving...' : 'Add'}
                     </button>
                   </div>
                 </form>
