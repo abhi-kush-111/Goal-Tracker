@@ -271,9 +271,9 @@ export const storage = {
     if (error) console.error('Error deleting goal:', error);
   },
 
-  async addMilestone(milestone: Milestone) {
+  async addMilestone(milestone: Milestone): Promise<Goal | null> {
     const user = await this.getUser();
-    if (!user) return;
+    if (!user) return null;
 
     const { error } = await supabase
       .from('milestones')
@@ -293,15 +293,11 @@ export const storage = {
     if (error) {
       console.error('Error adding milestone:', error);
       alert('Failed to save milestone: ' + error.message);
+      return null;
     }
     
     // Update goal progress
-    const goals = await this.getGoals();
-    const goal = goals.find(g => g.id === milestone.goal_id);
-    if (goal) {
-      this.updateGoalProgress(goal);
-      await this.updateGoal(goal.id, { progress: goal.progress });
-    }
+    return await this.recalculateGoalProgress(milestone.goal_id);
   },
 
   async toggleMilestone(id: string, date?: Date) {
@@ -347,17 +343,12 @@ export const storage = {
       .eq('user_id', user.id);
 
     // Update parent goal progress
-    const goals = await this.getGoals();
-    const goal = goals.find(g => g.id === milestone.goal_id);
-    if (goal) {
-      this.updateGoalProgress(goal);
-      await this.updateGoal(goal.id, { progress: goal.progress });
-    }
+    return await this.recalculateGoalProgress(milestone.goal_id);
   },
 
-  async toggleGoalCompletion(id: string, date?: Date) {
+  async toggleGoalCompletion(id: string, date?: Date): Promise<Goal | null> {
     const user = await this.getUser();
-    if (!user) return;
+    if (!user) return null;
 
     const { data: goal, error: fetchError } = await supabase
       .from('goals')
@@ -366,7 +357,7 @@ export const storage = {
       .eq('user_id', user.id)
       .single();
 
-    if (fetchError || !goal) return;
+    if (fetchError || !goal) return null;
 
     if (goal.repeat && goal.repeat !== 'None') {
       const targetDate = date || new Date();
@@ -390,12 +381,17 @@ export const storage = {
         .update({ completed_dates })
         .eq('id', id)
         .eq('user_id', user.id);
+        
+      return await this.recalculateGoalProgress(id);
     }
+    return null;
   },
 
   async setMilestonesDone(ids: string[], done: boolean, date?: Date) {
     const user = await this.getUser();
     if (!user) return;
+
+    const updatedGoalIds: string[] = [];
 
     for (const id of ids) {
       const { data: milestone } = await supabase
@@ -406,6 +402,7 @@ export const storage = {
         .single();
 
       if (!milestone) continue;
+      updatedGoalIds.push(milestone.goal_id);
 
       const updates: any = {};
       if (milestone.repeat && milestone.repeat !== 'None') {
@@ -442,12 +439,10 @@ export const storage = {
       }
     }
 
-    // Refresh all goals to update progress
-    const goals = await this.getGoals();
-    for (const goal of goals) {
-      this.updateGoalProgress(goal);
-      await this.updateGoal(goal.id, { progress: goal.progress });
-    }
+    // Refresh affected goals to update progress
+    const uniqueGoalIds = Array.from(new Set(updatedGoalIds));
+    const updatedGoals = await Promise.all(uniqueGoalIds.map(id => this.recalculateGoalProgress(id)));
+    return updatedGoals.filter(Boolean) as Goal[];
   },
 
   async deleteMilestone(id: string) {
@@ -470,18 +465,14 @@ export const storage = {
       .eq('user_id', user.id);
 
     if (goalId) {
-      const goals = await this.getGoals();
-      const goal = goals.find(g => g.id === goalId);
-      if (goal) {
-        this.updateGoalProgress(goal);
-        await this.updateGoal(goal.id, { progress: goal.progress });
-      }
+      return await this.recalculateGoalProgress(goalId);
     }
+    return null;
   },
 
-  async updateMilestone(id: string, updates: Partial<Milestone>) {
+  async updateMilestone(id: string, updates: Partial<Milestone>): Promise<Goal | null> {
     const user = await this.getUser();
-    if (!user) return;
+    if (!user) return null;
 
     const { error } = await supabase
       .from('milestones')
@@ -500,13 +491,27 @@ export const storage = {
       .single();
 
     if (milestone?.goal_id) {
-      const goals = await this.getGoals();
-      const goal = goals.find(g => g.id === milestone.goal_id);
-      if (goal) {
-        this.updateGoalProgress(goal);
-        await this.updateGoal(goal.id, { progress: goal.progress });
-      }
+      return await this.recalculateGoalProgress(milestone.goal_id);
     }
+    return null;
+  },
+
+  async recalculateGoalProgress(goalId: string): Promise<Goal | null> {
+    const user = await this.getUser();
+    if (!user) return null;
+
+    const [goalResult, milestonesResult] = await Promise.all([
+      supabase.from('goals').select('*').eq('id', goalId).eq('user_id', user.id).single(),
+      supabase.from('milestones').select('*').eq('goal_id', goalId).eq('user_id', user.id)
+    ]);
+
+    if (goalResult.error || !goalResult.data) return null;
+
+    const goal = { ...goalResult.data, milestones: milestonesResult.data || [] };
+    this.updateGoalProgress(goal);
+    
+    await this.updateGoal(goal.id, { progress: goal.progress });
+    return goal;
   },
 
   updateGoalProgress(goal: Goal) {
@@ -662,9 +667,9 @@ export const storage = {
       .eq('user_id', user.id);
   },
 
-  async toggleHabit(id: string, date?: Date) {
+  async toggleHabit(id: string, date?: Date): Promise<Habit | null> {
     const user = await this.getUser();
-    if (!user) return;
+    if (!user) return null;
 
     const { data: habit } = await supabase
       .from('habits')
@@ -673,7 +678,7 @@ export const storage = {
       .eq('user_id', user.id)
       .single();
 
-    if (!habit) return;
+    if (!habit) return null;
 
     const targetDate = date || new Date();
     const isCompleted = isCompletedOnDate(habit, targetDate);
@@ -693,11 +698,15 @@ export const storage = {
     
     const streak = this.calculateHabitStreak({ ...habit, completed_dates });
     
-    await supabase
+    const { data: updatedHabit } = await supabase
       .from('habits')
       .update({ completed_dates, streak })
       .eq('id', id)
-      .eq('user_id', user.id);
+      .eq('user_id', user.id)
+      .select()
+      .single();
+      
+    return updatedHabit;
   },
 
   calculateHabitStreak(habit: Habit): number {

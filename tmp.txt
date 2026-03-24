@@ -1,0 +1,45 @@
+1:import React, { useState, useEffect, useMemo } from "react";
+342:  const [currentMonth, setCurrentMonth] = useState(new Date());
+343:  const [localGoals, setLocalGoals] = useState(goals);
+344:  const [activeId, setActiveId] = useState<string | null>(null);
+670:  const [session, setSession] = useState<any>(null);
+671:  const [isSessionLoading, setIsSessionLoading] = useState(true);
+694:  const [goals, setGoals] = useState<Goal[]>([]);
+695:  const [habits, setHabits] = useState<Habit[]>([]);
+696:  const [categories, setCategories] = useState<Category[]>([]);
+697:  const [view, setView] = useState<
+707:  const [isCustomizingLayout, setIsCustomizingLayout] = useState(false);
+708:  const [dashboardLayout, setDashboardLayout] = useState<WidgetConfig[]>(() => {
+744:  const [theme, setTheme] = useState<"dark" | "light">(() => {
+764:  const [activeGoalId, setActiveGoalId] = useState<string | null>(null);
+765:  const [isAddingGoal, setIsAddingGoal] = useState(false);
+766:  const [isAddingHabit, setIsAddingHabit] = useState(false);
+767:  const [isFocusMode, setIsFocusMode] = useState(false);
+770:  const [yesterdayProgress, setYesterdayProgress] = useState<number>(() => {
+774:  const [barPulse, setBarPulse] = useState(false);
+775:  const [lastCompleted, setLastCompleted] = useState<string | null>(null);
+776:  const [showBreather, setShowBreather] = useState(false);
+777:  const [breatherMessage, setBreatherMessage] = useState("");
+778:  const [carouselIndex, setCarouselIndex] = useState(0);
+779:  const [slidingOut, setSlidingOut] = useState<Set<string>>(new Set());
+780:  const [floatingPoints, setFloatingPoints] = useState<
+783:  const [completedExpanded, setCompletedExpanded] = useState(false);
+784:  const [showMomentumMobile, setShowMomentumMobile] = useState(false);
+786:  const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
+787:  const [editingHabit, setEditingHabit] = useState<Habit | null>(null);
+788:  const [isAddingMilestone, setIsAddingMilestone] = useState(false);
+789:  const [isSaving, setIsSaving] = useState(false);
+790:  const [loading, setLoading] = useState(true);
+791:  const [selectedDate, setSelectedDate] = useState(new Date());
+792:  const [currentMonth, setCurrentMonth] = useState(new Date());
+793:  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+794:  const [isCustomizingNav, setIsCustomizingNav] = useState(false);
+795:  const [activeCalendarDragId, setActiveCalendarDragId] = useState<
+843:  const [navOrder, setNavOrder] = useState<
+875:  const [newGoal, setNewGoal] = useState({
+883:  const [newMilestone, setNewMilestone] = useState({
+890:  const [editingCategory, setEditingCategory] = useState<Category | null>(null);
+891:  const [isAddingCategory, setIsAddingCategory] = useState(false);
+892:  const [newCategory, setNewCategory] = useState({
+898:  const [currentDate, setCurrentDate] = useState(new Date());
+1016:  const [newHabit, setNewHabit] = useState<Partial<Habit>>({

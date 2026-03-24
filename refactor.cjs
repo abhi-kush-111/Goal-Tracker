@@ -1,49 +1,25 @@
 const fs = require('fs');
+const path = require('path');
 
-let app = fs.readFileSync('src/App.tsx', 'utf8');
+const appPath = path.join(__dirname, 'src', 'App.tsx');
+let content = fs.readFileSync(appPath, 'utf8');
 
-// 1. uid() -> crypto.randomUUID()
-app = app.replace(/const uid = \(\) => Math\.random\(\)\.toString\(36\)\.slice\(2, 11\);/g, 'const uid = () => crypto.randomUUID();');
+// Replace colors for Matte Ceramic White / Warm Titanium
+content = content.replace(/#111827/g, '#2A2A28'); // Dark card bg
+content = content.replace(/#0c1020/g, '#242422'); // Dark app bg
+content = content.replace(/#052e1a/g, '#431407'); // Dark text on accent
+content = content.replace(/slate-/g, 'stone-'); // Warmer grays
+content = content.replace(/emerald-/g, 'orange-'); // Safety orange accent
 
-// 2. Make fetch functions async
-app = app.replace(/const fetchGoals = \(\) => {/g, 'const fetchGoals = async () => {');
-app = app.replace(/setGoals\(storage\.getGoals\(\)\);/g, 'setGoals(await storage.getGoals());');
-app = app.replace(/setHabits\(storage\.getHabits\(\)\);/g, 'setHabits(await storage.getHabits());');
+// Make cards neumorphic
+// We'll replace the Card component's className
+content = content.replace(
+  /className=\{cn\("dark:bg-\[\#2A2A28\] bg-white border dark:border-white\/5 border-stone-200 rounded-2xl overflow-hidden", className\)\}/g,
+  'className={cn("dark:bg-[#2A2A28] bg-[#F5F5F3] border dark:border-[#3D3D3B] border-[#E5E5E3] rounded-2xl overflow-hidden shadow-[8px_8px_16px_#E6E6E4,-8px_-8px_16px_#FFFFFF] dark:shadow-[8px_8px_16px_#242422,-8px_-8px_16px_#30302E]", className)}'
+);
 
-app = app.replace(/const fetchCategories = \(\) => {/g, 'const fetchCategories = async () => {');
-app = app.replace(/const data = storage\.getCategories\(\);/g, 'const data = await storage.getCategories();');
+// We need to make sure the app background is #F5F5F3 in light mode
+// And #2A2A28 in dark mode. This is in index.css, so we'll do that separately.
 
-// 3. Add await to storage calls
-const storageMethods = [
-  'addCategory', 'updateCategory', 'deleteCategory',
-  'addGoal', 'updateGoal', 'deleteGoal',
-  'addHabit', 'updateHabit', 'deleteHabit',
-  'addMilestone', 'updateMilestone', 'toggleMilestone',
-  'setMilestonesDone', 'deleteMilestone',
-  'toggleHabit', 'toggleGoalCompletion'
-];
-
-storageMethods.forEach(method => {
-  const regex = new RegExp(`storage\\.${method}`, 'g');
-  app = app.replace(regex, `await storage.${method}`);
-});
-
-// 4. Add await to fetchGoals calls
-app = app.replace(/fetchGoals\(\);/g, 'await fetchGoals();');
-
-// 5. Fix useEffect to not await
-app = app.replace(/useEffect\(\(\) => {\n\s+await fetchGoals\(\);\n\s+await fetchCategories\(\);/g, 'useEffect(() => {\n    fetchGoals();\n    fetchCategories();');
-
-// 6. Fix handlers to be async
-app = app.replace(/const handleAddCategory = \(e: React\.FormEvent\) => {/g, 'const handleAddCategory = async (e: React.FormEvent) => {');
-app = app.replace(/const handleAddGoal = \(e: React\.FormEvent\) => {/g, 'const handleAddGoal = async (e: React.FormEvent) => {');
-app = app.replace(/const handleAddHabit = \(e: React\.FormEvent\) => {/g, 'const handleAddHabit = async (e: React.FormEvent) => {');
-app = app.replace(/const handleDragEnd = \(event: DragEndEvent\) => {/g, 'const handleDragEnd = async (event: DragEndEvent) => {');
-
-// 7. Fix inline onClick handlers that now contain await
-app = app.replace(/onClick={\(\) => {/g, 'onClick={async () => {');
-// Some might be like: onClick={() => await storage...}
-app = app.replace(/onClick={\(\) => await/g, 'onClick={async () => await');
-
-fs.writeFileSync('src/App.tsx', app);
-console.log('App.tsx refactored');
+fs.writeFileSync(appPath, content);
+console.log('App.tsx refactored!');

@@ -1,8 +1,8 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Plus Jakarta Sans", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
   --color-app-bg: var(--app-bg);
   --color-app-sidebar: var(--app-sidebar);
@@ -18,29 +18,63 @@
 
 @layer base {
   :root {
-    --app-bg: #ffffff;
-    --app-sidebar: #f8fafc;
-    --app-card: #ffffff;
-    --app-text: #111827;
-    --app-text-muted: #480d4c;
-    --app-border: rgba(17, 24, 39, 0.1);
-    --app-accent: #6366f1;
-    --app-accent-bg: rgba(99, 102, 241, 0.1);
+    /* Matte Ceramic White */
+    --app-bg: #F5F5F3;
+    --app-sidebar: #EBEBE8;
+    --app-card: #FAFAF9;
+    --app-text: #2D2D2A;
+    --app-text-muted: #8A8A8A;
+    --app-border: #E5E5E3;
+    --app-accent: #FF5722; /* Safety Orange */
+    --app-accent-bg: rgba(255, 87, 34, 0.1);
   }
 
   .dark {
-    --app-bg: #0c1020;
-    --app-sidebar: #0a0a0a;
-    --app-card: rgba(255, 255, 255, 0.02);
-    --app-text: #ffffff;
-    --app-text-muted: #94a3b8;
-    --app-border: rgba(255, 255, 255, 0.05);
-    --app-accent: #10b981;
-    --app-accent-bg: rgba(16, 185, 129, 0.1);
+    /* Warm Titanium */
+    --app-bg: #242422;
+    --app-sidebar: #1C1C1A;
+    --app-card: #2A2A28;
+    --app-text: #E8E8E6;
+    --app-text-muted: #9E9E9B;
+    --app-border: #3D3D3B;
+    --app-accent: #FFB300; /* Amber LED */
+    --app-accent-bg: rgba(255, 179, 0, 0.1);
   }
 
   body {
     @apply bg-app-bg text-app-text antialiased transition-colors duration-300;
+    /* Add a subtle noise texture to give it a matte hardware feel */
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.03'/%3E%3C/svg%3E");
+  }
+
+  /* Make all numbers use monospace font automatically */
+  .font-mono-nums {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* LED Glow effect for active/completed states */
+  .led-glow {
+    box-shadow: 0 0 8px var(--app-accent), inset 0 0 4px rgba(255,255,255,0.5);
+  }
+  .dark .led-glow {
+    box-shadow: 0 0 10px var(--app-accent), inset 0 0 4px rgba(255,255,255,0.3);
+  }
+
+  /* Extruded button effect */
+  .btn-extruded {
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05), inset 0 1px 0 rgba(255,255,255,0.5);
+    transition: all 0.1s ease;
+  }
+  .dark .btn-extruded {
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.1);
+  }
+  .btn-extruded:active {
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
+    transform: translateY(1px);
+  }
+  .dark .btn-extruded:active {
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.3);
   }
 }
 
