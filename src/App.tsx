@@ -384,10 +384,7 @@ const AssignTasksView = ({
         newDate = targetId;
       }
 
-      // Update storage
-      await storage.updateMilestone(milestoneId, { due_date: newDate });
-
-      // Update local state for immediate feedback
+      // Update local state for immediate feedback (Optimistic)
       setLocalGoals((prev) =>
         prev.map((g) => ({
           ...g,
@@ -396,6 +393,12 @@ const AssignTasksView = ({
           ),
         })),
       );
+
+      // Update storage in background
+      storage.updateMilestone(milestoneId, { due_date: newDate }).catch(err => {
+        console.error("Failed to update milestone:", err);
+        // Optionally revert local state here
+      });
     }
   };
 
@@ -691,9 +694,30 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  const [goals, setGoals] = useState<Goal[]>([]);
-  const [habits, setHabits] = useState<Habit[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
+  const [goals, setGoals] = useState<Goal[]>(() => {
+    const cached = localStorage.getItem('metricmint_goals');
+    return cached ? JSON.parse(cached) : [];
+  });
+  const [habits, setHabits] = useState<Habit[]>(() => {
+    const cached = localStorage.getItem('metricmint_habits');
+    return cached ? JSON.parse(cached) : [];
+  });
+  const [categories, setCategories] = useState<Category[]>(() => {
+    const cached = localStorage.getItem('metricmint_categories');
+    return cached ? JSON.parse(cached) : [];
+  });
+
+  useEffect(() => {
+    localStorage.setItem('metricmint_goals', JSON.stringify(goals));
+  }, [goals]);
+
+  useEffect(() => {
+    localStorage.setItem('metricmint_habits', JSON.stringify(habits));
+  }, [habits]);
+
+  useEffect(() => {
+    localStorage.setItem('metricmint_categories', JSON.stringify(categories));
+  }, [categories]);
   const [view, setView] = useState<
     | "today"
     | "dash"
@@ -787,7 +811,9 @@ export default function App() {
   const [editingHabit, setEditingHabit] = useState<Habit | null>(null);
   const [isAddingMilestone, setIsAddingMilestone] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => {
+    return !localStorage.getItem('metricmint_goals');
+  });
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -835,10 +861,21 @@ export default function App() {
       const milestoneId = active.id as string;
       const targetDate = over.id as string;
 
-      const updatedGoal = await storage.updateMilestone(milestoneId, { due_date: targetDate });
-      if (updatedGoal) {
-        setGoals(prev => prev.map(g => g.id === updatedGoal.id ? updatedGoal : g));
-      }
+      // Optimistic update
+      setGoals(prev => prev.map(g => ({
+        ...g,
+        milestones: g.milestones?.map(m => 
+          m.id === milestoneId ? { ...m, due_date: targetDate } : m
+        )
+      })));
+
+      storage.updateMilestone(milestoneId, { due_date: targetDate }).then(updatedGoal => {
+        if (updatedGoal) {
+          setGoals(prev => prev.map(g => g.id === updatedGoal.id ? updatedGoal : g));
+        }
+      }).catch(err => {
+        console.error("Failed to update milestone:", err);
+      });
     }
   };
 
@@ -907,7 +944,9 @@ export default function App() {
   useEffect(() => {
     if (session) {
       const loadData = async () => {
-        setLoading(true);
+        if (!localStorage.getItem('metricmint_goals')) {
+          setLoading(true);
+        }
         await Promise.all([fetchGoals(), fetchCategories()]);
         setLoading(false);
       };
@@ -1045,24 +1084,44 @@ export default function App() {
   const handleAddCategory = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCategory.name) return;
-    await storage.addCategory({ ...newCategory, id: uid() });
+    
+    const tempId = uid();
+    const optimisticCategory = { ...newCategory, id: tempId };
+    
+    // Optimistic update
+    setCategories(prev => [...prev, optimisticCategory]);
+    
     setIsAddingCategory(false);
     setNewCategory({ name: "", color: "#10b981", icon: "🎯" });
-    fetchCategories();
+    
+    storage.addCategory(optimisticCategory).then(() => {
+      fetchCategories();
+    }).catch(err => console.error("Failed to add category:", err));
   };
 
   const handleEditCategory = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingCategory) return;
-    await storage.updateCategory(
-      editingCategory.id,
-      editingCategory.name,
-      editingCategory.color,
-      editingCategory.icon,
-    );
+    
+    // Optimistic update
+    setCategories(prev => prev.map(c => c.id === editingCategory.id ? editingCategory : c));
+    
+    const idToUpdate = editingCategory.id;
+    const nameToUpdate = editingCategory.name;
+    const colorToUpdate = editingCategory.color;
+    const iconToUpdate = editingCategory.icon;
+    
     setEditingCategory(null);
-    fetchCategories();
-    await fetchGoals(); // Goals might have updated category names
+    
+    storage.updateCategory(
+      idToUpdate,
+      nameToUpdate,
+      colorToUpdate,
+      iconToUpdate,
+    ).then(() => {
+      fetchCategories();
+      fetchGoals(); // Goals might have updated category names
+    }).catch(err => console.error("Failed to update category:", err));
   };
 
   const handleDeleteCategory = async (id: string) => {
@@ -1072,8 +1131,13 @@ export default function App() {
       )
     )
       return;
-    await storage.deleteCategory(id);
-    fetchCategories();
+      
+    // Optimistic update
+    setCategories(prev => prev.filter(c => c.id !== id));
+
+    storage.deleteCategory(id).then(() => {
+      fetchCategories();
+    }).catch(err => console.error("Failed to delete category:", err));
   };
 
   const handleAddGoal = async (e: React.FormEvent) => {
@@ -1086,35 +1150,42 @@ export default function App() {
       return;
     }
 
+    const tempId = uid();
+    const optimisticGoal = {
+      ...newGoal,
+      id: tempId,
+      progress: 0,
+      streak: 0,
+      milestones: [],
+      last_reset_at: new Date().toISOString(),
+    };
+
+    if (!editingGoal) {
+      setGoals(prev => [...prev, optimisticGoal as any]);
+    }
+
+    setIsAddingGoal(false);
+    setNewGoal({
+      title: "",
+      category: categories[0]?.name || "Health",
+      priority: "Medium",
+      deadline: "",
+      note: "",
+      repeat: "None",
+    });
+
     setIsSaving(true);
     try {
       if (editingGoal) {
         console.log("Updating goal:", editingGoal.id);
         await storage.updateGoal(editingGoal.id, newGoal);
         setEditingGoal(null);
+        await fetchGoals();
       } else {
-        const id = uid();
-        console.log("Creating new goal with ID:", id);
-        await storage.addGoal({
-          ...newGoal,
-          id,
-          progress: 0,
-          streak: 0,
-          milestones: [],
-          last_reset_at: new Date().toISOString(),
-        });
+        console.log("Creating new goal with ID:", tempId);
+        await storage.addGoal(optimisticGoal as any);
+        await fetchGoals();
       }
-      setIsAddingGoal(false);
-      setNewGoal({
-        title: "",
-        category: categories[0]?.name || "Health",
-        priority: "Medium",
-        deadline: "",
-        note: "",
-        repeat: "None",
-      });
-      console.log("Fetching goals after save...");
-      await fetchGoals();
     } catch (error) {
       console.error("Error in handleAddGoal:", error);
       alert("An unexpected error occurred while saving.");
@@ -1125,43 +1196,59 @@ export default function App() {
 
   const handleDeleteGoal = async (id: string) => {
     if (!confirm("Are you sure you want to delete this goal?")) return;
-    await storage.deleteGoal(id);
+    
+    // Optimistic update
+    setGoals(prev => prev.filter(g => g.id !== id));
+    
     if (activeGoalId === id) {
       setView("goals");
       setActiveGoalId(null);
     }
-    await fetchGoals();
+
+    storage.deleteGoal(id).then(() => {
+      fetchGoals();
+    }).catch(err => console.error("Failed to delete goal:", err));
   };
 
   const handleAddHabit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSaving || !newHabit.title) return;
 
+    const tempId = uid() as string;
+    const optimisticHabit = {
+      id: tempId,
+      title: newHabit.title as string,
+      category: newHabit.category as string,
+      repeat: newHabit.repeat as any,
+      due_date: newHabit.due_date,
+      created_at: new Date().toISOString(),
+      completed_dates: [],
+      streak: 0,
+    };
+
+    if (!editingHabit) {
+      // Optimistic add
+      setHabits(prev => [...prev, optimisticHabit]);
+    }
+
+    setIsAddingHabit(false);
+    setNewHabit({
+      title: "",
+      category: categories[0]?.name || "Health",
+      repeat: "Daily",
+      due_date: "",
+    });
+
     setIsSaving(true);
     try {
       if (editingHabit) {
         await storage.updateHabit(editingHabit.id, newHabit);
         setEditingHabit(null);
+        await fetchGoals(); // For full refresh on edit
       } else {
-        await storage.addHabit({
-          id: uid() as string,
-          title: newHabit.title as string,
-          category: newHabit.category as string,
-          repeat: newHabit.repeat as any,
-          due_date: newHabit.due_date,
-          created_at: new Date().toISOString(),
-          completed_dates: [],
-          streak: 0,
-        });
+        await storage.addHabit(optimisticHabit);
+        await fetchGoals(); // Refresh to get real DB state
       }
-      setIsAddingHabit(false);
-      setNewHabit({
-        title: "",
-        category: categories[0]?.name || "Health",
-        repeat: "Daily",
-        due_date: "",
-      });
-      await fetchGoals();
     } catch (error) {
       console.error("Error in handleAddHabit:", error);
     } finally {
@@ -1171,8 +1258,13 @@ export default function App() {
 
   const handleDeleteHabit = async (id: string) => {
     if (!confirm("Are you sure you want to delete this habit?")) return;
-    await storage.deleteHabit(id);
-    await fetchGoals();
+    
+    // Optimistic update
+    setHabits(prev => prev.filter(h => h.id !== id));
+
+    storage.deleteHabit(id).then(() => {
+      fetchGoals();
+    }).catch(err => console.error("Failed to delete habit:", err));
   };
 
   const handleAddMilestone = async (e: React.FormEvent) => {
@@ -1207,29 +1299,50 @@ export default function App() {
   };
 
   const toggleMilestone = async (id: string) => {
-    const updatedGoal = await storage.toggleMilestone(id);
-    if (updatedGoal) {
-      setGoals(prev => prev.map(g => g.id === updatedGoal.id ? updatedGoal : g));
-    }
+    // Optimistic update
+    setGoals(prev => prev.map(g => ({
+      ...g,
+      milestones: g.milestones?.map(m => m.id === id ? { ...m, done: !m.done } : m)
+    })));
+
+    storage.toggleMilestone(id).then(updatedGoal => {
+      if (updatedGoal) {
+        setGoals(prev => prev.map(g => g.id === updatedGoal.id ? updatedGoal : g));
+      }
+    }).catch(err => console.error("Failed to toggle milestone:", err));
   };
 
   const handleMarkAllDone = async (ids: string[]) => {
-    const updatedGoals = await storage.setMilestonesDone(ids, true);
-    if (updatedGoals && updatedGoals.length > 0) {
-      setGoals(prev => prev.map(g => {
-        const updated = updatedGoals.find(ug => ug.id === g.id);
-        return updated || g;
-      }));
-    }
+    // Optimistic update
+    setGoals(prev => prev.map(g => ({
+      ...g,
+      milestones: g.milestones?.map(m => ids.includes(m.id) ? { ...m, done: true } : m)
+    })));
+
+    storage.setMilestonesDone(ids, true).then(updatedGoals => {
+      if (updatedGoals && updatedGoals.length > 0) {
+        setGoals(prev => prev.map(g => {
+          const updated = updatedGoals.find(ug => ug.id === g.id);
+          return updated || g;
+        }));
+      }
+    }).catch(err => console.error("Failed to mark all done:", err));
   };
 
   const deleteMilestone = async (id: string) => {
-    const updatedGoal = await storage.deleteMilestone(id);
-    if (updatedGoal) {
-      setGoals(prev => prev.map(g => g.id === updatedGoal.id ? updatedGoal : g));
-    } else {
-      await fetchGoals();
-    }
+    // Optimistic update
+    setGoals(prev => prev.map(g => ({
+      ...g,
+      milestones: g.milestones?.filter(m => m.id !== id)
+    })));
+
+    storage.deleteMilestone(id).then(updatedGoal => {
+      if (updatedGoal) {
+        setGoals(prev => prev.map(g => g.id === updatedGoal.id ? updatedGoal : g));
+      } else {
+        fetchGoals();
+      }
+    }).catch(err => console.error("Failed to delete milestone:", err));
   };
 
   const activeGoal = useMemo(
@@ -1365,19 +1478,59 @@ export default function App() {
   };
 
   const handleToggleToday = async (ms: any) => {
+    const targetDate = new Date();
+    const isCompleting = !ms.done;
+
+    // Optimistic update
     if (ms.isHabit) {
-      const updatedHabit = await storage.toggleHabit(ms.id, new Date());
-      if (updatedHabit) setHabits(prev => prev.map(h => h.id === updatedHabit.id ? updatedHabit : h));
+      setHabits(prev => prev.map(h => {
+        if (h.id === ms.id) {
+          let newDates = h.completed_dates || [];
+          if (isCompleting) {
+            newDates = [...newDates, targetDate.toISOString()];
+          } else {
+            newDates = newDates.filter(d => d.split('T')[0] !== targetDate.toISOString().split('T')[0]);
+          }
+          return { ...h, completed_dates: newDates };
+        }
+        return h;
+      }));
     } else if (ms.isGoalAsMilestone) {
-      const updatedGoal = await storage.toggleGoalCompletion(ms.id, new Date());
-      if (updatedGoal) setGoals(prev => prev.map(g => g.id === updatedGoal.id ? updatedGoal : g));
+      setGoals(prev => prev.map(g => {
+        if (g.id === ms.id) {
+          let newDates = g.completed_dates || [];
+          if (isCompleting) {
+            newDates = [...newDates, targetDate.toISOString()];
+          } else {
+            newDates = newDates.filter(d => d.split('T')[0] !== targetDate.toISOString().split('T')[0]);
+          }
+          return { ...g, completed_dates: newDates };
+        }
+        return g;
+      }));
     } else {
-      const updatedGoal = await storage.toggleMilestone(ms.id, new Date());
-      if (updatedGoal) setGoals(prev => prev.map(g => g.id === updatedGoal.id ? updatedGoal : g));
+      setGoals(prev => prev.map(g => ({
+        ...g,
+        milestones: g.milestones?.map(m => m.id === ms.id ? { ...m, done: isCompleting } : m)
+      })));
+    }
+
+    // Background sync
+    if (ms.isHabit) {
+      storage.toggleHabit(ms.id, targetDate).then(updatedHabit => {
+        if (updatedHabit) setHabits(prev => prev.map(h => h.id === updatedHabit.id ? updatedHabit : h));
+      });
+    } else if (ms.isGoalAsMilestone) {
+      storage.toggleGoalCompletion(ms.id, targetDate).then(updatedGoal => {
+        if (updatedGoal) setGoals(prev => prev.map(g => g.id === updatedGoal.id ? updatedGoal : g));
+      });
+    } else {
+      storage.toggleMilestone(ms.id, targetDate).then(updatedGoal => {
+        if (updatedGoal) setGoals(prev => prev.map(g => g.id === updatedGoal.id ? updatedGoal : g));
+      });
     }
 
     // Check if this was the last task
-    const isCompleting = !ms.done;
     const doneCount = todayMilestones.filter((m) => m.done).length;
     if (
       isCompleting &&
@@ -3927,8 +4080,26 @@ export default function App() {
                           </div>
                           <button
                             onClick={async () => {
-                              const updatedHabit = await storage.toggleHabit(habit.id);
-                              if (updatedHabit) setHabits(prev => prev.map(h => h.id === updatedHabit.id ? updatedHabit : h));
+                              const targetDate = new Date();
+                              const isCompleting = !isDoneToday;
+                              
+                              // Optimistic update
+                              setHabits(prev => prev.map(h => {
+                                if (h.id === habit.id) {
+                                  let newDates = h.completed_dates || [];
+                                  if (isCompleting) {
+                                    newDates = [...newDates, targetDate.toISOString()];
+                                  } else {
+                                    newDates = newDates.filter(d => d.split('T')[0] !== targetDate.toISOString().split('T')[0]);
+                                  }
+                                  return { ...h, completed_dates: newDates };
+                                }
+                                return h;
+                              }));
+
+                              storage.toggleHabit(habit.id).then(updatedHabit => {
+                                if (updatedHabit) setHabits(prev => prev.map(h => h.id === updatedHabit.id ? updatedHabit : h));
+                              }).catch(err => console.error("Failed to toggle habit:", err));
                             }}
                             className={cn(
                               "w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-300 shadow-lg",
